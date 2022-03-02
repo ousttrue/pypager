@@ -1,6 +1,12 @@
 """
 Pager implementation in Python.
+
+
+class Pager:
+    sources: List[Source]
+    source_info: Dict[Source, SourceInfo]    
 """
+
 import asyncio
 import sys
 import threading
@@ -23,7 +29,8 @@ from prompt_toolkit.output import Output
 from .help import HELP
 from .key_bindings import create_key_bindings
 from .layout import PagerLayout, create_buffer_window
-from .source import DummySource, FileSource, FormattedTextSource, PipeSource, Source
+from .source import DummySource, FormattedTextSource, Source
+from .source.pipe_source import FileSource, PipeSource
 from .style import ui_style
 
 __all__ = [
@@ -232,12 +239,14 @@ class Pager:
             self.message = "Can't remove the last buffer."
 
     def focus_previous_source(self) -> None:
-        self.current_source_index = (self.current_source_index - 1) % len(self.sources)
+        self.current_source_index = (
+            self.current_source_index - 1) % len(self.sources)
         self.application.layout.focus(self.current_source_info.window)
         self.in_colon_mode = False
 
     def focus_next_source(self) -> None:
-        self.current_source_index = (self.current_source_index + 1) % len(self.sources)
+        self.current_source_index = (
+            self.current_source_index + 1) % len(self.sources)
         self.application.layout.focus(self.current_source_info.window)
         self.in_colon_mode = False
 
@@ -279,7 +288,8 @@ class Pager:
             # Make sure to preload at least 2x the amount of lines on a page.
             if lines_below_bottom < info.window_height * 2 or self.forward_forever:
                 # Lines to be loaded.
-                lines = [info.window_height * 2 - lines_below_bottom]  # nonlocal
+                lines = [info.window_height * 2 -
+                         lines_below_bottom]  # nonlocal
 
                 def handle_content(tokens: StyleAndTextTuples) -> List[str]:
                     """Handle tokens, update `line_tokens`, decrease

@@ -1,70 +1,25 @@
-"""
-Input source for a pager.
-(pipe or generator.)
-"""
+from typing import Optional, Generator, Sequence, Union, Dict
 import os
-from abc import ABCMeta, abstractmethod
 from codecs import getincrementaldecoder
-from typing import Dict, Generator, Optional, Sequence, Union
+import prompt_toolkit.lexers
+import prompt_toolkit.formatted_text
+import prompt_toolkit.styles
+from . import Source
 
-from prompt_toolkit.formatted_text import (
-    AnyFormattedText,
-    StyleAndTextTuples,
-    to_formatted_text,
-)
-from prompt_toolkit.layout.utils import explode_text_fragments
-from prompt_toolkit.lexers import Lexer
+#
 from prompt_toolkit.output.vt100 import BG_ANSI_COLORS, FG_ANSI_COLORS
 from prompt_toolkit.output.vt100 import _256_colors as _256_colors_table
-from prompt_toolkit.styles import Attrs
 
-__all__ = [
-    "Source",
-    "DummySource",
-    "PipeSource",
-    "GeneratorSource",
-    "StringSource",
-    "FormattedTextSource",
-]
+# Mapping of the escape codes for 256colors to their 'ffffff' value.
+_256_colors = {}
+
+for i, (r, g, b) in enumerate(_256_colors_table.colors):
+    _256_colors[1024 + i] = "%02x%02x%02x" % (r, g, b)
 
 
-class Source(metaclass=ABCMeta):
-    #: The lexer to be used in the layout.
-    lexer: Optional[Lexer] = None
-
-    @abstractmethod
-    def get_name(self) -> str:
-        " Return the filename or name for this input. "
-
-    @abstractmethod
-    def eof(self) -> bool:
-        " Return True when we reached the end of the input. "
-
-    @abstractmethod
-    def read_chunk(self) -> StyleAndTextTuples:
-        """
-        Read data from input. Return a list of token/text tuples.
-
-        This can be blocking and will be called in another thread.
-        """
-
-    def close(self) -> None:
-        pass
-
-
-class DummySource(Source):
-    """
-    Empty source.
-    """
-
-    def get_name(self) -> str:
-        return ""
-
-    def eof(self) -> bool:
-        return True
-
-    def read_chunk(self) -> StyleAndTextTuples:
-        return []
+# Mapping of the ANSI color codes to their names.
+_fg_colors = {v: k for k, v in FG_ANSI_COLORS.items()}
+_bg_colors = {v: k for k, v in BG_ANSI_COLORS.items()}
 
 
 class PipeSource(Source):
@@ -76,7 +31,7 @@ class PipeSource(Source):
     def __init__(
         self,
         fileno: int,
-        lexer: Optional[Lexer] = None,
+        lexer: Optional[prompt_toolkit.lexers.Lexer] = None,
         name: str = "<stdin>",
         encoding: str = "utf-8",
     ) -> None:
@@ -84,11 +39,11 @@ class PipeSource(Source):
         self.lexer = lexer
         self.name = name
 
-        self._line_tokens: StyleAndTextTuples = []
+        self._line_tokens: prompt_toolkit.formatted_text.StyleAndTextTuples = []
         self._eof = False
 
         # Default style attributes.
-        self._attrs = Attrs(
+        self._attrs = prompt_toolkit.styles.Attrs(
             color=None,
             bgcolor=None,
             bold=False,
@@ -127,7 +82,7 @@ class PipeSource(Source):
 
         return self._stdin_decoder.decode(data)
 
-    def read_chunk(self) -> StyleAndTextTuples:
+    def read_chunk(self) -> prompt_toolkit.formatted_text.StyleAndTextTuples:
         # Content is ready for reading on stdin.
         data = self._get_data()
 
@@ -256,11 +211,12 @@ class PipeSource(Source):
                 replace["reverse"] = False
             elif not attr:
                 replace = {}
-                self._attrs = Attrs(
+                self._attrs = prompt_toolkit.styles.Attrs(
                     color=None,
                     bgcolor=None,
                     bold=False,
                     underline=False,
+                    strike=False,
                     italic=False,
                     blink=False,
                     reverse=False,
@@ -329,103 +285,10 @@ class PipeSource(Source):
 
 
 class FileSource(PipeSource):
-    def __init__(self, filename: str, lexer: Optional[Lexer] = None) -> None:
+    def __init__(self, filename: str, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> None:
         self.fp = open(filename, "rb")
 
         super().__init__(self.fp.fileno(), lexer=lexer, name=filename)
 
     def close(self) -> None:
         self.fp.close()
-
-
-# Mapping of the ANSI color codes to their names.
-_fg_colors = {v: k for k, v in FG_ANSI_COLORS.items()}
-_bg_colors = {v: k for k, v in BG_ANSI_COLORS.items()}
-
-# Mapping of the escape codes for 256colors to their 'ffffff' value.
-_256_colors = {}
-
-for i, (r, g, b) in enumerate(_256_colors_table.colors):
-    _256_colors[1024 + i] = "%02x%02x%02x" % (r, g, b)
-
-
-class GeneratorSource(Source):
-    """
-    When the input is coming from a Python generator.
-    """
-
-    def __init__(
-        self,
-        generator: Generator[StyleAndTextTuples, None, None],
-        lexer: Optional[Lexer] = None,
-        name: str = "",
-    ) -> None:
-        self._eof = False
-        self.generator = generator
-        self.lexer = lexer
-        self.name = name
-
-    def get_name(self) -> str:
-        return self.name
-
-    def eof(self) -> bool:
-        return self._eof
-
-    def read_chunk(self) -> StyleAndTextTuples:
-        " Read data from input. Return a list of token/text tuples. "
-        try:
-            return explode_text_fragments(next(self.generator))
-        except StopIteration:
-            self._eof = True
-            return []
-
-
-class StringSource(Source):
-    """
-    Take a Python string is input for the pager.
-    """
-
-    def __init__(
-        self, text: str, lexer: Optional[Lexer] = None, name: str = ""
-    ) -> None:
-        self.text = text
-        self.lexer = lexer
-        self.name = name
-        self._read = False
-
-    def get_name(self) -> str:
-        return self.name
-
-    def eof(self) -> bool:
-        return self._read
-
-    def read_chunk(self) -> StyleAndTextTuples:
-        if self._read:
-            return []
-        else:
-            self._read = True
-            return explode_text_fragments([("", self.text)])
-
-
-class FormattedTextSource(Source):
-    """
-    Take any kind of prompt_toolkit formatted text as input for the pager.
-    """
-
-    def __init__(self, formatted_text: AnyFormattedText, name: str = "") -> None:
-        self.formatted_text = to_formatted_text(formatted_text)
-        self.name = name
-        self._read = False
-
-    def get_name(self) -> str:
-        return self.name
-
-    def eof(self) -> bool:
-        return self._read
-
-    def read_chunk(self) -> StyleAndTextTuples:
-        if self._read:
-            return []
-        else:
-            self._read = True
-            return explode_text_fragments(self.formatted_text)
