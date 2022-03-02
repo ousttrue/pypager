@@ -10,15 +10,13 @@ SourceInfo
     => Source
     => Window
 """
-
+from typing import List, Optional, Sequence
 import asyncio
 import sys
 import threading
 import weakref
-from typing import List, Optional, Sequence
 
 import prompt_toolkit
-from prompt_toolkit.application.current import get_app
 import prompt_toolkit.formatted_text
 import prompt_toolkit.widgets.toolbars
 import prompt_toolkit.layout.containers
@@ -42,64 +40,11 @@ from .source import DummySource, FormattedTextSource, Source
 from .source.pipe_source import FileSource, PipeSource
 from .source.source_info import SourceInfo
 from .style import ui_style
+from .event_property import EventProperty
 
 __all__ = [
     "Pager",
 ]
-
-
-class _Arg(prompt_toolkit.layout.containers.ConditionalContainer):
-    def __init__(self) -> None:
-        def get_text() -> str:
-            app = get_app()
-            if app.key_processor.arg is not None:
-                return " %s " % app.key_processor.arg
-            else:
-                return ""
-
-        super().__init__(
-            prompt_toolkit.layout.containers.Window(
-                prompt_toolkit.layout.controls.FormattedTextControl(get_text),
-                style="class:arg",
-                align=prompt_toolkit.layout.containers.WindowAlign.RIGHT,
-            ),
-            filter=prompt_toolkit.filters.HasArg(),
-        )
-
-
-class _DynamicBody(prompt_toolkit.layout.containers.Container):
-    def __init__(self, pager: "Pager") -> None:
-        self.pager = pager
-        self._bodies: weakref.WeakKeyDictionary[
-            str, prompt_toolkit.layout.containers.Window
-        ] = weakref.WeakKeyDictionary()  # Map buffer_name to Window.
-
-    def get_buffer_window(self) -> prompt_toolkit.layout.containers.Window:
-        " Return the Container object according to which Buffer/Source is visible. "
-        return self.pager.current_source_info.window
-
-    def reset(self) -> None:
-        for body in self._bodies.values():
-            body.reset()
-
-    def get_render_info(self):
-        return self.get_buffer_window().render_info
-
-    def preferred_width(self, *a, **kw):
-        return self.get_buffer_window().preferred_width(*a, **kw)
-
-    def preferred_height(self, *a, **kw):
-        return self.get_buffer_window().preferred_height(*a, **kw)
-
-    def write_to_screen(self, *a, **kw):
-        return self.get_buffer_window().write_to_screen(*a, **kw)
-
-    def get_children(self):
-        return [self.get_buffer_window()]
-
-    def walk(self, *a, **kw):
-        # Required for prompt_toolkit.layout.utils.find_window_for_buffer_name.
-        return self.get_buffer_window().walk(*a, **kw)
 
 
 class Pager:
@@ -114,7 +59,8 @@ class Pager:
 
     def __init__(self) -> None:
         self.sources: List[Source] = []
-        self.current_source_index = 0  # Index in `self.sources`.
+        # Index in `self.sources`.
+        self.current_source_index = EventProperty[int](0)
         self.highlight_search = True
         self.in_colon_mode = False
         self.message: Optional[str] = None
@@ -134,34 +80,14 @@ class Pager:
 
         # Create prompt_toolkit stuff.
 
-        def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
-            # Open file.
-            self.open_file(buff.text)
-            return False
-
-        # Buffer for the 'Examine:' input.
-        self.examine_buffer = prompt_toolkit.buffer.Buffer(
-            name="EXAMINE",
-            completer=prompt_toolkit.completion.PathCompleter(expanduser=True),
-            accept_handler=open_buffer,
-            multiline=False,
-        )
-
         # Search buffer.
         self.search_buffer = prompt_toolkit.buffer.Buffer(multiline=False)
 
         # self = PagerLayout(self)
-        self.dynamic_body = _DynamicBody(self)
+        from .layout.dynamicbody import DynamicBody
+        self.dynamic_body = DynamicBody(self)
 
         # Build an interface.
-
-        self.examine_control = prompt_toolkit.layout.controls.BufferControl(
-            buffer=self.examine_buffer,
-            lexer=prompt_toolkit.lexers.SimpleLexer(
-                style="class:examine,examine-text"),
-            input_processors=[prompt_toolkit.layout.processors.BeforeInput(
-                lambda: [("class:examine", " Examine: ")])],
-        )
 
         self.search_toolbar = prompt_toolkit.widgets.toolbars.SearchToolbar(
             vi_mode=True, search_buffer=self.search_buffer
@@ -198,55 +124,31 @@ class Pager:
         def get_message_tokens():
             return [("class:message", self.message)] if self.message else []
 
+        from .layout.statusbar import StatusBar
+        from .layout.commandbar import CommandBar
+        from .layout.examinebar import ExamineBar
+        from .layout.arg import Arg
+        statusbar = StatusBar(self.source_info, has_colon)
+
+        def on_source_updated(index: int):
+            current_source = self.sources[index]
+            statusbar.current_source = current_source
+        self.current_source_index.callbacks.append(on_source_updated)
+
         return prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
                 [
                     self.dynamic_body,
                     self.search_toolbar,
                     prompt_toolkit.widgets.toolbars.SystemToolbar(),
-                    prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.layout.containers.VSplit(
-                            [
-                                prompt_toolkit.layout.containers.Window(
-                                    height=1,
-                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
-                                        self._get_statusbar_left_tokens
-                                    ),
-                                    style="class:statusbar",
-                                ),
-                                prompt_toolkit.layout.containers.Window(
-                                    height=1,
-                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
-                                        self._get_statusbar_right_tokens
-                                    ),
-                                    style="class:statusbar.cursorposition",
-                                    align=prompt_toolkit.layout.containers.WindowAlign.RIGHT,
-                                ),
-                            ]
-                        ),
-                        filter=~prompt_toolkit.filters.HasSearch()
-                        & ~prompt_toolkit.filters.has_focus(prompt_toolkit.enums.SYSTEM_BUFFER)
-                        & ~has_colon
-                        & ~prompt_toolkit.filters.has_focus("EXAMINE"),
-                    ),
-                    prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.layout.containers.Window(
-                            prompt_toolkit.layout.controls.FormattedTextControl(" :"), height=1, style="class:examine"
-                        ),
-                        filter=has_colon,
-                    ),
-                    prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.layout.containers.Window(
-                            self.examine_control, height=1, style="class:examine"
-                        ),
-                        filter=prompt_toolkit.filters.has_focus(
-                            self.examine_buffer),
-                    ),
+                    statusbar,
+                    CommandBar(has_colon),
+                    ExamineBar(self.open_file),
                 ]
             ),
             floats=[
                 prompt_toolkit.layout.containers.Float(
-                    right=0, height=1, bottom=1, content=_Arg()),
+                    right=0, height=1, bottom=1, content=Arg()),
                 prompt_toolkit.layout.containers.Float(
                     bottom=1,
                     left=0,
@@ -277,39 +179,6 @@ class Pager:
             ],
         )
 
-    def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
-        """
-        Displayed at the bottom left.
-        """
-        if self.displaying_help:
-            return prompt_toolkit.formatted_text.HTML(" HELP -- Press <key>[q]</key> when done")
-        else:
-            return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
-
-    def _get_statusbar_right_tokens(self) -> prompt_toolkit.formatted_text.StyleAndTextTuples:
-        """
-        Displayed at the bottom right.
-        """
-        source_info = self.source_info[self.current_source]
-        buffer = source_info.buffer
-        document = buffer.document
-        row = document.cursor_position_row + 1
-        col = document.cursor_position_col + 1
-
-        if source_info.wrap_lines:
-            col = "WRAP"
-
-        if self.current_source.eof():
-            percentage = int(100 * row / document.line_count)
-            return [
-                (
-                    "class:statusbar,cursor-position",
-                    " (%s,%s) %s%% " % (row, col, percentage),
-                )
-            ]
-        else:
-            return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
-
     @classmethod
     def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
         """
@@ -328,7 +197,7 @@ class Pager:
     def current_source(self) -> Source:
         " The current `Source`. "
         try:
-            return self.sources[self.current_source_index]
+            return self.sources[self.current_source_index.value]
         except IndexError:
             return self._dummy_source
 
@@ -364,7 +233,7 @@ class Pager:
         self.sources.append(source)
 
         # Focus
-        self.current_source_index = len(self.sources) - 1
+        self.current_source_index.set(len(self.sources) - 1)
         self.application.layout.focus(source_info.window)
 
         return source_info
@@ -375,25 +244,25 @@ class Pager:
         (If >1 source is left.)
         """
         if len(self.sources) > 1:
-            current_source_index = self.current_source
+            current_source = self.current_source
 
             # Focus the previous source.
             self.focus_previous_source()
 
             # Remove the last source.
-            self.sources.remove(current_source_index)
+            self.sources.remove(current_source)
         else:
             self.message = "Can't remove the last buffer."
 
     def focus_previous_source(self) -> None:
-        self.current_source_index = (
-            self.current_source_index - 1) % len(self.sources)
+        self.current_source_index.set((
+            self.current_source_index.value - 1) % len(self.sources))
         self.application.layout.focus(self.current_source_info.window)
         self.in_colon_mode = False
 
     def focus_next_source(self) -> None:
-        self.current_source_index = (
-            self.current_source_index + 1) % len(self.sources)
+        self.current_source_index.set((
+            self.current_source_index.value + 1) % len(self.sources))
         self.application.layout.focus(self.current_source_info.window)
         self.in_colon_mode = False
 
