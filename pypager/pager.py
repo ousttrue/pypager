@@ -33,8 +33,6 @@ import prompt_toolkit.enums
 import prompt_toolkit.lexers
 import prompt_toolkit.styles
 from prompt_toolkit.input.defaults import create_input
-from prompt_toolkit.input import Input
-from prompt_toolkit.output import Output
 import prompt_toolkit.filters
 
 from .filters import HasColon
@@ -112,28 +110,15 @@ class Pager:
         p = Pager()
         p.add_source(...)
         p.run()
-
-    :param source: :class:`.Source` instance.
-    :param lexer: Prompt_toolkit `lexer` instance.
-    :param style: Prompt_toolkit `Style` instance.
-    :param search_text: `None` or the search string that is highlighted.
     """
 
-    def __init__(
-        self,
-        *,
-        style: Optional[prompt_toolkit.styles.Style] = None,
-        search_text: Optional[str] = None,
-        input: Optional[Input] = None,
-        output: Optional[Output] = None,
-    ) -> None:
+    def __init__(self) -> None:
         self.sources: List[Source] = []
         self.current_source_index = 0  # Index in `self.sources`.
         self.highlight_search = True
         self.in_colon_mode = False
         self.message: Optional[str] = None
         self.displaying_help = False
-        self.search_text = search_text
 
         self._dummy_source = DummySource()
 
@@ -183,20 +168,18 @@ class Pager:
         )
 
         # Input/output.
-        if input is None:
-            # By default, use the stdout device for input.
-            # (This makes it possible to pipe data to stdin, but still read key
-            # strokes from the TTY).
-            input = create_input(sys.stdout)
+        # By default, use the stdout device for input.
+        # (This makes it possible to pipe data to stdin, but still read key
+        # strokes from the TTY).
+        input = create_input(sys.stdout)
 
         bindings = create_key_bindings(self)
         self.application = prompt_toolkit.Application(
             input=input,
-            output=output,
             layout=prompt_toolkit.layout.Layout(container=self._layout()),
             enable_page_navigation_bindings=True,
             key_bindings=bindings,
-            style=style or prompt_toolkit.styles.Style.from_dict(ui_style),
+            style=prompt_toolkit.styles.Style.from_dict(ui_style),
             mouse_support=True,
             after_render=self._after_render,
             full_screen=True,
@@ -502,30 +485,3 @@ class Pager:
                 t = threading.Thread(target=receive_content_from_generator)
                 t.daemon = True
                 t.start()
-
-    def _before_run(self) -> None:
-        # Set search highlighting.
-        if self.search_text:
-            self.application.current_search_state.text = self.search_text
-
-    def run(self) -> None:
-        """
-        Create an event loop for the application and run it.
-        """
-        try:
-            self._before_run()
-            return self.application.run()
-        finally:
-            # XXX: Close all sources which are opened by the pager itself.
-            pass
-
-    async def run_async(self) -> None:
-        """
-        Create an event loop for the application and run it.
-        """
-        try:
-            self._before_run()
-            return await self.application.run_async()
-        finally:
-            # XXX: Close all sources which are opened by the pager itself.
-            pass
