@@ -93,6 +93,7 @@ class PipeSource(Source):
             bgcolor=None,
             bold=False,
             underline=False,
+            strike=False,
             italic=False,
             blink=False,
             reverse=False,
@@ -198,14 +199,15 @@ class PipeSource(Source):
                             # Set attributes and token.
                             self._select_graphic_rendition(
                                 params
-                            )  ### TODO: use inline style.
+                            )  # TODO: use inline style.
                             #### token = ('C', ) + self._attrs
                             break
                         else:
                             # Ignore unspported sequence.
                             break
             else:
-                line_tokens.append((self._get_attrs_style() + " " + backspace_style, c))
+                line_tokens.append(
+                    (self._get_attrs_style() + " " + backspace_style, c))
                 if replace_one_token:
                     backspace_style = ""
 
