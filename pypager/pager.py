@@ -17,6 +17,10 @@ import threading
 import weakref
 from typing import List, Optional, Sequence
 
+import prompt_toolkit.formatted_text
+import prompt_toolkit.widgets.toolbars
+import prompt_toolkit.layout.controls
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import PathCompleter
@@ -25,7 +29,6 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.formatted_text import StyleAndTextTuples, HTML
 from prompt_toolkit.input.defaults import create_input
 from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.lexers import Lexer, PygmentsLexer
 from prompt_toolkit.styles import Style
 from prompt_toolkit.input import Input
@@ -34,7 +37,6 @@ from prompt_toolkit.lexers import SimpleLexer
 from prompt_toolkit.layout.processors import (
     BeforeInput,
 )
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import MultiColumnCompletionsMenu
 from prompt_toolkit.widgets.toolbars import (
     FormattedTextToolbar,
@@ -58,7 +60,6 @@ from prompt_toolkit.enums import SYSTEM_BUFFER
 from .filters import HasColon
 from .help import HELP
 from .key_bindings import create_key_bindings
-from .layout import _DynamicBody, _Arg, Titlebar, MessageToolbarBar
 from .source import DummySource, FormattedTextSource, Source
 from .source.pipe_source import FileSource, PipeSource
 from .source.source_info import SourceInfo
@@ -67,6 +68,60 @@ from .style import ui_style
 __all__ = [
     "Pager",
 ]
+
+
+class _Arg(ConditionalContainer):
+    def __init__(self) -> None:
+        def get_text() -> str:
+            app = get_app()
+            if app.key_processor.arg is not None:
+                return " %s " % app.key_processor.arg
+            else:
+                return ""
+
+        super().__init__(
+            Window(
+                prompt_toolkit.layout.controls.FormattedTextControl(get_text),
+                style="class:arg",
+                align=WindowAlign.RIGHT,
+            ),
+            filter=HasArg(),
+        )
+
+
+class _DynamicBody(Container):
+    def __init__(self, pager: "Pager") -> None:
+        self.pager = pager
+        self._bodies: weakref.WeakKeyDictionary[
+            str, Window
+        ] = weakref.WeakKeyDictionary()  # Map buffer_name to Window.
+
+    def get_buffer_window(self) -> Window:
+        " Return the Container object according to which Buffer/Source is visible. "
+        return self.pager.current_source_info.window
+
+    def reset(self) -> None:
+        for body in self._bodies.values():
+            body.reset()
+
+    def get_render_info(self):
+        return self.get_buffer_window().render_info
+
+    def preferred_width(self, *a, **kw):
+        return self.get_buffer_window().preferred_width(*a, **kw)
+
+    def preferred_height(self, *a, **kw):
+        return self.get_buffer_window().preferred_height(*a, **kw)
+
+    def write_to_screen(self, *a, **kw):
+        return self.get_buffer_window().write_to_screen(*a, **kw)
+
+    def get_children(self):
+        return [self.get_buffer_window()]
+
+    def walk(self, *a, **kw):
+        # Required for prompt_toolkit.layout.utils.find_window_for_buffer_name.
+        return self.get_buffer_window().walk(*a, **kw)
 
 
 class Pager:
@@ -139,7 +194,7 @@ class Pager:
         # Build an interface.
         has_colon = HasColon(self)
 
-        self.examine_control: BufferControl = BufferControl(
+        self.examine_control = prompt_toolkit.layout.controls.BufferControl(
             buffer=self.examine_buffer,
             lexer=SimpleLexer(style="class:examine,examine-text"),
             input_processors=[BeforeInput(
@@ -150,11 +205,18 @@ class Pager:
             vi_mode=True, search_buffer=self.search_buffer
         )
 
+        def get_titlebar_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
+            return self.titlebar_tokens
+
+        def get_message_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
+            return [("class:message", self.message)] if self.message else []
+
         self.container = FloatContainer(
             content=HSplit(
                 [
                     ConditionalContainer(
-                        content=Titlebar(self),
+                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
+                            get_titlebar_tokens),
                         filter=prompt_toolkit.filters.Condition(
                             lambda: self.display_titlebar),
                     ),
@@ -166,14 +228,14 @@ class Pager:
                             [
                                 Window(
                                     height=1,
-                                    content=FormattedTextControl(
+                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
                                         self._get_statusbar_left_tokens
                                     ),
                                     style="class:statusbar",
                                 ),
                                 Window(
                                     height=1,
-                                    content=FormattedTextControl(
+                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
                                         self._get_statusbar_right_tokens
                                     ),
                                     style="class:statusbar.cursorposition",
@@ -188,7 +250,7 @@ class Pager:
                     ),
                     ConditionalContainer(
                         content=Window(
-                            FormattedTextControl(" :"), height=1, style="class:examine"
+                            prompt_toolkit.layout.controls.FormattedTextControl(" :"), height=1, style="class:examine"
                         ),
                         filter=has_colon,
                     ),
@@ -208,7 +270,8 @@ class Pager:
                     right=0,
                     height=1,
                     content=ConditionalContainer(
-                        content=MessageToolbarBar(self),
+                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
+                            get_message_tokens),
                         filter=Condition(lambda: bool(self.message)),
                     ),
                 ),
