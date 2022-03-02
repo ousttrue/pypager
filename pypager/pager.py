@@ -4,14 +4,18 @@ Pager implementation in Python.
 
 class Pager:
     sources: List[Source]
-    source_info: Dict[Source, SourceInfo]    
+    source_info: Dict[Source, SourceInfo]
+
+SourceInfo 
+    => Source
+    => Window
 """
 
 import asyncio
 import sys
 import threading
 import weakref
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
@@ -28,44 +32,15 @@ from prompt_toolkit.output import Output
 
 from .help import HELP
 from .key_bindings import create_key_bindings
-from .layout import PagerLayout, create_buffer_window
+from .layout import PagerLayout
 from .source import DummySource, FormattedTextSource, Source
 from .source.pipe_source import FileSource, PipeSource
+from .source.source_info import SourceInfo
 from .style import ui_style
 
 __all__ = [
     "Pager",
-    "SourceInfo",
 ]
-
-
-class SourceInfo:
-    """
-    For each opened source, we keep this list of pager data.
-    """
-
-    _buffer_counter = 0  # Counter to generate unique buffer names.
-
-    def __init__(self, pager: "Pager", source: Source) -> None:
-        self.pager = pager
-        self.source = source
-
-        self.buffer = Buffer(read_only=True)
-
-        # List of lines. (Each line is a list of (token, text) tuples itself.)
-        self.line_tokens: List[StyleAndTextTuples] = [[]]
-
-        # Marks. (Mapping from mark name to (cursor position, scroll_offset).)
-        self.marks: Dict[str, Tuple[int, int]] = {}
-
-        # `Pager` sets this flag when he starts reading the generator of this
-        # source in a coroutine.
-        self.waiting_for_input_stream = False
-
-        # Enable/disable line wrapping.
-        self.wrap_lines = False
-
-        self.window = create_buffer_window(self)
 
 
 class Pager:
@@ -192,7 +167,7 @@ class Pager:
         try:
             return self.source_info[self.current_source]
         except KeyError:
-            return SourceInfo(self, self.current_source)
+            return SourceInfo(self.current_source, self.highlight_search, self.layout.search_toolbar.control)
 
     def open_file(self, filename: str) -> None:
         """
@@ -211,7 +186,8 @@ class Pager:
         """
         Add a new :class:`.Source` instance.
         """
-        source_info = SourceInfo(self, source)
+        source_info = SourceInfo(
+            source, self.highlight_search, self.layout.search_toolbar.control)
         self.source_info[source] = source_info
 
         self.sources.append(source)

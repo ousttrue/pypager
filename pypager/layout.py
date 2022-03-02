@@ -19,15 +19,6 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import MultiColumnCompletionsMenu
 from prompt_toolkit.layout.processors import (
     BeforeInput,
-    ConditionalProcessor,
-    HighlightIncrementalSearchProcessor,
-    HighlightMatchingBracketProcessor,
-    HighlightSearchProcessor,
-    HighlightSelectionProcessor,
-    Processor,
-    TabsProcessor,
-    Transformation,
-    TransformationInput,
 )
 from prompt_toolkit.lexers import SimpleLexer
 from prompt_toolkit.widgets.toolbars import (
@@ -39,24 +30,11 @@ from prompt_toolkit.widgets.toolbars import (
 from .filters import HasColon
 
 if TYPE_CHECKING:
-    from .pager import Pager, SourceInfo
+    from .pager import Pager
 
 __all__ = [
     "PagerLayout",
 ]
-
-
-class _EscapeProcessor(Processor):
-    """
-    Interpret escape sequences like less/more/most do.
-    """
-
-    def __init__(self, source_info: "SourceInfo") -> None:
-        self.source_info = source_info
-
-    def apply_transformation(self, ti: TransformationInput) -> Transformation:
-        tokens = self.source_info.line_tokens[ti.lineno]
-        return Transformation(tokens[:])
 
 
 class _Arg(ConditionalContainer):
@@ -148,7 +126,8 @@ class PagerLayout:
         self.examine_control: BufferControl = BufferControl(
             buffer=pager.examine_buffer,
             lexer=SimpleLexer(style="class:examine,examine-text"),
-            input_processors=[BeforeInput(lambda: [("class:examine", " Examine: ")])],
+            input_processors=[BeforeInput(
+                lambda: [("class:examine", " Examine: ")])],
         )
 
         self.search_toolbar = SearchToolbar(
@@ -229,7 +208,8 @@ class PagerLayout:
                         ),
                     ),
                 ),
-                Float(xcursor=True, ycursor=True, content=MultiColumnCompletionsMenu()),
+                Float(xcursor=True, ycursor=True,
+                      content=MultiColumnCompletionsMenu()),
             ],
         )
 
@@ -265,45 +245,3 @@ class PagerLayout:
             ]
         else:
             return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
-
-
-def create_buffer_window(source_info: "SourceInfo") -> Window:
-    """
-    Window for the main content.
-    """
-    pager = source_info.pager
-
-    input_processors = [
-        ConditionalProcessor(
-            processor=_EscapeProcessor(source_info),
-            filter=Condition(lambda: not bool(source_info.source.lexer)),
-        ),
-        TabsProcessor(),
-        ConditionalProcessor(
-            processor=HighlightSearchProcessor(),
-            filter=Condition(lambda: pager.highlight_search),
-        ),
-        ConditionalProcessor(
-            processor=HighlightIncrementalSearchProcessor(),
-            filter=Condition(lambda: pager.highlight_search),
-        ),
-        HighlightSelectionProcessor(),
-        HighlightMatchingBracketProcessor(),
-    ]
-
-    @Condition
-    def wrap_lines() -> bool:
-        return source_info.wrap_lines
-
-    return Window(
-        always_hide_cursor=True,
-        wrap_lines=wrap_lines,
-        content=BufferControl(
-            buffer=source_info.buffer,
-            lexer=source_info.source.lexer,
-            input_processors=input_processors,
-            include_default_input_processors=False,
-            preview_search=True,
-            search_buffer_control=pager.layout.search_toolbar.control,
-        ),
-    )
