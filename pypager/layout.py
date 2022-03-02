@@ -15,19 +15,8 @@ from prompt_toolkit.layout.containers import (
     Window,
     WindowAlign,
 )
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.menus import MultiColumnCompletionsMenu
-from prompt_toolkit.layout.processors import (
-    BeforeInput,
-)
-from prompt_toolkit.lexers import SimpleLexer
-from prompt_toolkit.widgets.toolbars import (
-    FormattedTextToolbar,
-    SearchToolbar,
-    SystemToolbar,
-)
-
-from .filters import HasColon
+import prompt_toolkit.widgets.toolbars
+import prompt_toolkit.layout.controls
 
 if TYPE_CHECKING:
     from .pager import Pager
@@ -48,7 +37,7 @@ class _Arg(ConditionalContainer):
 
         super().__init__(
             Window(
-                FormattedTextControl(get_text),
+                prompt_toolkit.layout.controls.FormattedTextControl(get_text),
                 style="class:arg",
                 align=WindowAlign.RIGHT,
             ),
@@ -56,7 +45,7 @@ class _Arg(ConditionalContainer):
         )
 
 
-class Titlebar(FormattedTextToolbar):
+class Titlebar(prompt_toolkit.widgets.toolbars.FormattedTextToolbar):
     """
     Displayed at the top.
     """
@@ -68,7 +57,7 @@ class Titlebar(FormattedTextToolbar):
         super().__init__(get_tokens)
 
 
-class MessageToolbarBar(FormattedTextToolbar):
+class MessageToolbarBar(prompt_toolkit.widgets.toolbars.FormattedTextToolbar):
     """
     Pop-up (at the bottom) for showing error/status messages.
     """
@@ -113,135 +102,3 @@ class _DynamicBody(Container):
     def walk(self, *a, **kw):
         # Required for prompt_toolkit.layout.utils.find_window_for_buffer_name.
         return self.get_buffer_window().walk(*a, **kw)
-
-
-class PagerLayout:
-    def __init__(self, pager: "Pager") -> None:
-        self.pager = pager
-        self.dynamic_body = _DynamicBody(pager)
-
-        # Build an interface.
-        has_colon = HasColon(pager)
-
-        self.examine_control: BufferControl = BufferControl(
-            buffer=pager.examine_buffer,
-            lexer=SimpleLexer(style="class:examine,examine-text"),
-            input_processors=[BeforeInput(
-                lambda: [("class:examine", " Examine: ")])],
-        )
-
-        self.search_toolbar = SearchToolbar(
-            vi_mode=True, search_buffer=pager.search_buffer
-        )
-
-        self.container = FloatContainer(
-            content=HSplit(
-                [
-                    ConditionalContainer(
-                        content=Titlebar(pager),
-                        filter=Condition(lambda: pager.display_titlebar),
-                    ),
-                    self.dynamic_body,
-                    self.search_toolbar,
-                    SystemToolbar(),
-                    ConditionalContainer(
-                        content=VSplit(
-                            [
-                                Window(
-                                    height=1,
-                                    content=FormattedTextControl(
-                                        self._get_statusbar_left_tokens
-                                    ),
-                                    style="class:statusbar",
-                                ),
-                                Window(
-                                    height=1,
-                                    content=FormattedTextControl(
-                                        self._get_statusbar_right_tokens
-                                    ),
-                                    style="class:statusbar.cursorposition",
-                                    align=WindowAlign.RIGHT,
-                                ),
-                            ]
-                        ),
-                        filter=~HasSearch()
-                        & ~has_focus(SYSTEM_BUFFER)
-                        & ~has_colon
-                        & ~has_focus("EXAMINE"),
-                    ),
-                    ConditionalContainer(
-                        content=Window(
-                            FormattedTextControl(" :"), height=1, style="class:examine"
-                        ),
-                        filter=has_colon,
-                    ),
-                    ConditionalContainer(
-                        content=Window(
-                            self.examine_control, height=1, style="class:examine"
-                        ),
-                        filter=has_focus(pager.examine_buffer),
-                    ),
-                ]
-            ),
-            floats=[
-                Float(right=0, height=1, bottom=1, content=_Arg()),
-                Float(
-                    bottom=1,
-                    left=0,
-                    right=0,
-                    height=1,
-                    content=ConditionalContainer(
-                        content=MessageToolbarBar(pager),
-                        filter=Condition(lambda: bool(pager.message)),
-                    ),
-                ),
-                Float(
-                    right=0,
-                    height=1,
-                    bottom=1,
-                    content=ConditionalContainer(
-                        content=FormattedTextToolbar(
-                            lambda: [("class:loading", " Loading... ")],
-                        ),
-                        filter=Condition(
-                            lambda: pager.current_source_info.waiting_for_input_stream
-                        ),
-                    ),
-                ),
-                Float(xcursor=True, ycursor=True,
-                      content=MultiColumnCompletionsMenu()),
-            ],
-        )
-
-    def _get_statusbar_left_tokens(self) -> HTML:
-        """
-        Displayed at the bottom left.
-        """
-        if self.pager.displaying_help:
-            return HTML(" HELP -- Press <key>[q]</key> when done")
-        else:
-            return HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
-
-    def _get_statusbar_right_tokens(self) -> StyleAndTextTuples:
-        """
-        Displayed at the bottom right.
-        """
-        source_info = self.pager.source_info[self.pager.current_source]
-        buffer = source_info.buffer
-        document = buffer.document
-        row = document.cursor_position_row + 1
-        col = document.cursor_position_col + 1
-
-        if source_info.wrap_lines:
-            col = "WRAP"
-
-        if self.pager.current_source.eof():
-            percentage = int(100 * row / document.line_count)
-            return [
-                (
-                    "class:statusbar,cursor-position",
-                    " (%s,%s) %s%% " % (row, col, percentage),
-                )
-            ]
-        else:
-            return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]

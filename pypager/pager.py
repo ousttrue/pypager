@@ -22,17 +22,43 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import PathCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.formatted_text import StyleAndTextTuples, HTML
 from prompt_toolkit.input.defaults import create_input
 from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.lexers import Lexer, PygmentsLexer
 from prompt_toolkit.styles import Style
 from prompt_toolkit.input import Input
 from prompt_toolkit.output import Output
+from prompt_toolkit.lexers import SimpleLexer
+from prompt_toolkit.layout.processors import (
+    BeforeInput,
+)
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.menus import MultiColumnCompletionsMenu
+from prompt_toolkit.widgets.toolbars import (
+    FormattedTextToolbar,
+    SearchToolbar,
+    SystemToolbar,
+)
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    Container,
+    Float,
+    FloatContainer,
+    HSplit,
+    VSplit,
+    Window,
+    WindowAlign,
+)
+import prompt_toolkit.filters
+from prompt_toolkit.filters import Condition, HasArg, HasSearch, has_focus
+from prompt_toolkit.enums import SYSTEM_BUFFER
 
+from .filters import HasColon
 from .help import HELP
 from .key_bindings import create_key_bindings
-from .layout import PagerLayout
+from .layout import _DynamicBody, _Arg, Titlebar, MessageToolbarBar
 from .source import DummySource, FormattedTextSource, Source
 from .source.pipe_source import FileSource, PipeSource
 from .source.source_info import SourceInfo
@@ -54,7 +80,6 @@ class Pager:
 
     :param source: :class:`.Source` instance.
     :param lexer: Prompt_toolkit `lexer` instance.
-    :param vi_mode: Enable Vi key bindings.
     :param style: Prompt_toolkit `Style` instance.
     :param search_text: `None` or the search string that is highlighted.
     """
@@ -62,7 +87,6 @@ class Pager:
     def __init__(
         self,
         *,
-        vi_mode: bool = False,
         style: Optional[Style] = None,
         search_text: Optional[str] = None,
         titlebar_tokens=None,
@@ -109,7 +133,102 @@ class Pager:
         # Search buffer.
         self.search_buffer = Buffer(multiline=False)
 
-        self.layout = PagerLayout(self)
+        # self = PagerLayout(self)
+        self.dynamic_body = _DynamicBody(self)
+
+        # Build an interface.
+        has_colon = HasColon(self)
+
+        self.examine_control: BufferControl = BufferControl(
+            buffer=self.examine_buffer,
+            lexer=SimpleLexer(style="class:examine,examine-text"),
+            input_processors=[BeforeInput(
+                lambda: [("class:examine", " Examine: ")])],
+        )
+
+        self.search_toolbar = SearchToolbar(
+            vi_mode=True, search_buffer=self.search_buffer
+        )
+
+        self.container = FloatContainer(
+            content=HSplit(
+                [
+                    ConditionalContainer(
+                        content=Titlebar(self),
+                        filter=prompt_toolkit.filters.Condition(
+                            lambda: self.display_titlebar),
+                    ),
+                    self.dynamic_body,
+                    self.search_toolbar,
+                    SystemToolbar(),
+                    ConditionalContainer(
+                        content=VSplit(
+                            [
+                                Window(
+                                    height=1,
+                                    content=FormattedTextControl(
+                                        self._get_statusbar_left_tokens
+                                    ),
+                                    style="class:statusbar",
+                                ),
+                                Window(
+                                    height=1,
+                                    content=FormattedTextControl(
+                                        self._get_statusbar_right_tokens
+                                    ),
+                                    style="class:statusbar.cursorposition",
+                                    align=WindowAlign.RIGHT,
+                                ),
+                            ]
+                        ),
+                        filter=~HasSearch()
+                        & ~has_focus(SYSTEM_BUFFER)
+                        & ~has_colon
+                        & ~has_focus("EXAMINE"),
+                    ),
+                    ConditionalContainer(
+                        content=Window(
+                            FormattedTextControl(" :"), height=1, style="class:examine"
+                        ),
+                        filter=has_colon,
+                    ),
+                    ConditionalContainer(
+                        content=Window(
+                            self.examine_control, height=1, style="class:examine"
+                        ),
+                        filter=has_focus(self.examine_buffer),
+                    ),
+                ]
+            ),
+            floats=[
+                Float(right=0, height=1, bottom=1, content=_Arg()),
+                Float(
+                    bottom=1,
+                    left=0,
+                    right=0,
+                    height=1,
+                    content=ConditionalContainer(
+                        content=MessageToolbarBar(self),
+                        filter=Condition(lambda: bool(self.message)),
+                    ),
+                ),
+                Float(
+                    right=0,
+                    height=1,
+                    bottom=1,
+                    content=ConditionalContainer(
+                        content=FormattedTextToolbar(
+                            lambda: [("class:loading", " Loading... ")],
+                        ),
+                        filter=Condition(
+                            lambda: self.current_source_info.waiting_for_input_stream
+                        ),
+                    ),
+                ),
+                Float(xcursor=True, ycursor=True,
+                      content=MultiColumnCompletionsMenu()),
+            ],
+        )
 
         # Input/output.
         if input is None:
@@ -122,13 +241,14 @@ class Pager:
         self.application: Application[None] = Application(
             input=input,
             output=output,
-            layout=Layout(container=self.layout.container),
+            layout=Layout(container=self.container),
             enable_page_navigation_bindings=True,
             key_bindings=bindings,
             style=style or Style.from_dict(ui_style),
             mouse_support=True,
             after_render=self._after_render,
             full_screen=True,
+            editing_mode=EditingMode.VI,
         )
 
         # Hide message when a key is pressed.
@@ -137,8 +257,38 @@ class Pager:
 
         self.application.key_processor.before_key_press += key_pressed
 
-        if vi_mode:
-            self.application.editing_mode = EditingMode.VI
+    def _get_statusbar_left_tokens(self) -> HTML:
+        """
+        Displayed at the bottom left.
+        """
+        if self.displaying_help:
+            return HTML(" HELP -- Press <key>[q]</key> when done")
+        else:
+            return HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
+
+    def _get_statusbar_right_tokens(self) -> StyleAndTextTuples:
+        """
+        Displayed at the bottom right.
+        """
+        source_info = self.source_info[self.current_source]
+        buffer = source_info.buffer
+        document = buffer.document
+        row = document.cursor_position_row + 1
+        col = document.cursor_position_col + 1
+
+        if source_info.wrap_lines:
+            col = "WRAP"
+
+        if self.current_source.eof():
+            percentage = int(100 * row / document.line_count)
+            return [
+                (
+                    "class:statusbar,cursor-position",
+                    " (%s,%s) %s%% " % (row, col, percentage),
+                )
+            ]
+        else:
+            return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
 
     @classmethod
     def from_pipe(cls, lexer: Optional[Lexer] = None) -> "Pager":
@@ -167,7 +317,7 @@ class Pager:
         try:
             return self.source_info[self.current_source]
         except KeyError:
-            return SourceInfo(self.current_source, self.highlight_search, self.layout.search_toolbar.control)
+            return SourceInfo(self.current_source, self.highlight_search, self.search_toolbar.control)
 
     def open_file(self, filename: str) -> None:
         """
@@ -187,7 +337,7 @@ class Pager:
         Add a new :class:`.Source` instance.
         """
         source_info = SourceInfo(
-            source, self.highlight_search, self.layout.search_toolbar.control)
+            source, self.highlight_search, self.search_toolbar.control)
         self.source_info[source] = source_info
 
         self.sources.append(source)
@@ -200,7 +350,7 @@ class Pager:
 
     def remove_current_source(self) -> None:
         """
-        Remove the current source from the pager.
+        Remove the current source from the self.
         (If >1 source is left.)
         """
         if len(self.sources) > 1:
@@ -251,7 +401,7 @@ class Pager:
         # When the bottom is visible, read more input.
         # Try at least `info.window_height`, if this amount of data is
         # available.
-        info = self.layout.dynamic_body.get_render_info()
+        info = self.dynamic_body.get_render_info()
         source = self.current_source
         source_info = self.source_info[source]
         b = source_info.buffer

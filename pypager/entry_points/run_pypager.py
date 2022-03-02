@@ -21,30 +21,26 @@ def run():
         pager = Pager.from_pipe()
         pager.run()
     else:
-        parser = argparse.ArgumentParser(description="Browse through a text file.")
+        parser = argparse.ArgumentParser(
+            description="Browse through a text file.")
         parser.add_argument(
             "filename", metavar="filename", nargs="+", help="The file to be displayed."
         )
-        parser.add_argument("--vi", help="Prefer Vi key bindings.", action="store_true")
+        parser.add_argument(
+            "--vi", help="Prefer Vi key bindings.", action="store_true")
         parser.add_argument(
             "--emacs", help="Prefer Emacs key bindings.", action="store_true"
         )
 
         args = parser.parse_args()
 
-        # Determine input mode.
-        vi_mode = "vi" in os.environ.get("EDITOR", "").lower()
-        if args.vi:
-            vi_mode = True
-        if args.emacs:
-            vi_mode = False
-
-        pager = Pager(vi_mode=vi_mode)
+        pager = Pager()
 
         # Open files.
         for filename in args.filename:
             # When a filename is given, take a lexer from that filename.
-            lexer = PygmentsLexer.from_filename(filename, sync_from_start=False)
+            lexer = PygmentsLexer.from_filename(
+                filename, sync_from_start=False)
 
             pager.add_source(FileSource(filename, lexer=lexer))
 
