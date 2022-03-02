@@ -17,45 +17,25 @@ import threading
 import weakref
 from typing import List, Optional, Sequence
 
+import prompt_toolkit
+from prompt_toolkit.application.current import get_app
 import prompt_toolkit.formatted_text
 import prompt_toolkit.widgets.toolbars
+import prompt_toolkit.layout.containers
 import prompt_toolkit.layout.controls
-from prompt_toolkit.application.current import get_app
-from prompt_toolkit.application import Application
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import PathCompleter
-from prompt_toolkit.document import Document
-from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.formatted_text import StyleAndTextTuples, HTML
+import prompt_toolkit.layout.processors
+import prompt_toolkit.layout.menus
+import prompt_toolkit.layout
+import prompt_toolkit.buffer
+import prompt_toolkit.completion
+import prompt_toolkit.document
+import prompt_toolkit.enums
+import prompt_toolkit.lexers
+import prompt_toolkit.styles
 from prompt_toolkit.input.defaults import create_input
-from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.lexers import Lexer, PygmentsLexer
-from prompt_toolkit.styles import Style
 from prompt_toolkit.input import Input
 from prompt_toolkit.output import Output
-from prompt_toolkit.lexers import SimpleLexer
-from prompt_toolkit.layout.processors import (
-    BeforeInput,
-)
-from prompt_toolkit.layout.menus import MultiColumnCompletionsMenu
-from prompt_toolkit.widgets.toolbars import (
-    FormattedTextToolbar,
-    SearchToolbar,
-    SystemToolbar,
-)
-from prompt_toolkit.layout.containers import (
-    ConditionalContainer,
-    Container,
-    Float,
-    FloatContainer,
-    HSplit,
-    VSplit,
-    Window,
-    WindowAlign,
-)
 import prompt_toolkit.filters
-from prompt_toolkit.filters import Condition, HasArg, HasSearch, has_focus
-from prompt_toolkit.enums import SYSTEM_BUFFER
 
 from .filters import HasColon
 from .help import HELP
@@ -70,7 +50,7 @@ __all__ = [
 ]
 
 
-class _Arg(ConditionalContainer):
+class _Arg(prompt_toolkit.layout.containers.ConditionalContainer):
     def __init__(self) -> None:
         def get_text() -> str:
             app = get_app()
@@ -80,23 +60,23 @@ class _Arg(ConditionalContainer):
                 return ""
 
         super().__init__(
-            Window(
+            prompt_toolkit.layout.containers.Window(
                 prompt_toolkit.layout.controls.FormattedTextControl(get_text),
                 style="class:arg",
-                align=WindowAlign.RIGHT,
+                align=prompt_toolkit.layout.containers.WindowAlign.RIGHT,
             ),
-            filter=HasArg(),
+            filter=prompt_toolkit.filters.HasArg(),
         )
 
 
-class _DynamicBody(Container):
+class _DynamicBody(prompt_toolkit.layout.containers.Container):
     def __init__(self, pager: "Pager") -> None:
         self.pager = pager
         self._bodies: weakref.WeakKeyDictionary[
-            str, Window
+            str, prompt_toolkit.layout.containers.Window
         ] = weakref.WeakKeyDictionary()  # Map buffer_name to Window.
 
-    def get_buffer_window(self) -> Window:
+    def get_buffer_window(self) -> prompt_toolkit.layout.containers.Window:
         " Return the Container object according to which Buffer/Source is visible. "
         return self.pager.current_source_info.window
 
@@ -142,7 +122,7 @@ class Pager:
     def __init__(
         self,
         *,
-        style: Optional[Style] = None,
+        style: Optional[prompt_toolkit.styles.Style] = None,
         search_text: Optional[str] = None,
         titlebar_tokens=None,
         input: Optional[Input] = None,
@@ -172,125 +152,37 @@ class Pager:
 
         # Create prompt_toolkit stuff.
 
-        def open_file(buff: Buffer) -> bool:
+        def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
             # Open file.
             self.open_file(buff.text)
             return False
 
         # Buffer for the 'Examine:' input.
-        self.examine_buffer = Buffer(
+        self.examine_buffer = prompt_toolkit.buffer.Buffer(
             name="EXAMINE",
-            completer=PathCompleter(expanduser=True),
-            accept_handler=open_file,
+            completer=prompt_toolkit.completion.PathCompleter(expanduser=True),
+            accept_handler=open_buffer,
             multiline=False,
         )
 
         # Search buffer.
-        self.search_buffer = Buffer(multiline=False)
+        self.search_buffer = prompt_toolkit.buffer.Buffer(multiline=False)
 
         # self = PagerLayout(self)
         self.dynamic_body = _DynamicBody(self)
 
         # Build an interface.
-        has_colon = HasColon(self)
 
         self.examine_control = prompt_toolkit.layout.controls.BufferControl(
             buffer=self.examine_buffer,
-            lexer=SimpleLexer(style="class:examine,examine-text"),
-            input_processors=[BeforeInput(
+            lexer=prompt_toolkit.lexers.SimpleLexer(
+                style="class:examine,examine-text"),
+            input_processors=[prompt_toolkit.layout.processors.BeforeInput(
                 lambda: [("class:examine", " Examine: ")])],
         )
 
-        self.search_toolbar = SearchToolbar(
+        self.search_toolbar = prompt_toolkit.widgets.toolbars.SearchToolbar(
             vi_mode=True, search_buffer=self.search_buffer
-        )
-
-        def get_titlebar_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
-            return self.titlebar_tokens
-
-        def get_message_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
-            return [("class:message", self.message)] if self.message else []
-
-        self.container = FloatContainer(
-            content=HSplit(
-                [
-                    ConditionalContainer(
-                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
-                            get_titlebar_tokens),
-                        filter=prompt_toolkit.filters.Condition(
-                            lambda: self.display_titlebar),
-                    ),
-                    self.dynamic_body,
-                    self.search_toolbar,
-                    SystemToolbar(),
-                    ConditionalContainer(
-                        content=VSplit(
-                            [
-                                Window(
-                                    height=1,
-                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
-                                        self._get_statusbar_left_tokens
-                                    ),
-                                    style="class:statusbar",
-                                ),
-                                Window(
-                                    height=1,
-                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
-                                        self._get_statusbar_right_tokens
-                                    ),
-                                    style="class:statusbar.cursorposition",
-                                    align=WindowAlign.RIGHT,
-                                ),
-                            ]
-                        ),
-                        filter=~HasSearch()
-                        & ~has_focus(SYSTEM_BUFFER)
-                        & ~has_colon
-                        & ~has_focus("EXAMINE"),
-                    ),
-                    ConditionalContainer(
-                        content=Window(
-                            prompt_toolkit.layout.controls.FormattedTextControl(" :"), height=1, style="class:examine"
-                        ),
-                        filter=has_colon,
-                    ),
-                    ConditionalContainer(
-                        content=Window(
-                            self.examine_control, height=1, style="class:examine"
-                        ),
-                        filter=has_focus(self.examine_buffer),
-                    ),
-                ]
-            ),
-            floats=[
-                Float(right=0, height=1, bottom=1, content=_Arg()),
-                Float(
-                    bottom=1,
-                    left=0,
-                    right=0,
-                    height=1,
-                    content=ConditionalContainer(
-                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
-                            get_message_tokens),
-                        filter=Condition(lambda: bool(self.message)),
-                    ),
-                ),
-                Float(
-                    right=0,
-                    height=1,
-                    bottom=1,
-                    content=ConditionalContainer(
-                        content=FormattedTextToolbar(
-                            lambda: [("class:loading", " Loading... ")],
-                        ),
-                        filter=Condition(
-                            lambda: self.current_source_info.waiting_for_input_stream
-                        ),
-                    ),
-                ),
-                Float(xcursor=True, ycursor=True,
-                      content=MultiColumnCompletionsMenu()),
-            ],
         )
 
         # Input/output.
@@ -301,17 +193,17 @@ class Pager:
             input = create_input(sys.stdout)
 
         bindings = create_key_bindings(self)
-        self.application: Application[None] = Application(
+        self.application = prompt_toolkit.Application(
             input=input,
             output=output,
-            layout=Layout(container=self.container),
+            layout=prompt_toolkit.layout.Layout(container=self._layout()),
             enable_page_navigation_bindings=True,
             key_bindings=bindings,
-            style=style or Style.from_dict(ui_style),
+            style=style or prompt_toolkit.styles.Style.from_dict(ui_style),
             mouse_support=True,
             after_render=self._after_render,
             full_screen=True,
-            editing_mode=EditingMode.VI,
+            editing_mode=prompt_toolkit.enums.EditingMode.VI,
         )
 
         # Hide message when a key is pressed.
@@ -320,16 +212,110 @@ class Pager:
 
         self.application.key_processor.before_key_press += key_pressed
 
-    def _get_statusbar_left_tokens(self) -> HTML:
+    def _layout(self) -> prompt_toolkit.layout.containers.Container:
+        has_colon = HasColon(self)
+
+        def get_titlebar_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
+            return self.titlebar_tokens
+
+        def get_message_tokens():
+            return [("class:message", self.message)] if self.message else []
+
+        return prompt_toolkit.layout.containers.FloatContainer(
+            content=prompt_toolkit.layout.containers.HSplit(
+                [
+                    prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
+                            get_titlebar_tokens),
+                        filter=prompt_toolkit.filters.Condition(
+                            lambda: self.display_titlebar),
+                    ),
+                    self.dynamic_body,
+                    self.search_toolbar,
+                    prompt_toolkit.widgets.toolbars.SystemToolbar(),
+                    prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.layout.containers.VSplit(
+                            [
+                                prompt_toolkit.layout.containers.Window(
+                                    height=1,
+                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
+                                        self._get_statusbar_left_tokens
+                                    ),
+                                    style="class:statusbar",
+                                ),
+                                prompt_toolkit.layout.containers.Window(
+                                    height=1,
+                                    content=prompt_toolkit.layout.controls.FormattedTextControl(
+                                        self._get_statusbar_right_tokens
+                                    ),
+                                    style="class:statusbar.cursorposition",
+                                    align=prompt_toolkit.layout.containers.WindowAlign.RIGHT,
+                                ),
+                            ]
+                        ),
+                        filter=~prompt_toolkit.filters.HasSearch()
+                        & ~prompt_toolkit.filters.has_focus(prompt_toolkit.enums.SYSTEM_BUFFER)
+                        & ~has_colon
+                        & ~prompt_toolkit.filters.has_focus("EXAMINE"),
+                    ),
+                    prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.layout.containers.Window(
+                            prompt_toolkit.layout.controls.FormattedTextControl(" :"), height=1, style="class:examine"
+                        ),
+                        filter=has_colon,
+                    ),
+                    prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.layout.containers.Window(
+                            self.examine_control, height=1, style="class:examine"
+                        ),
+                        filter=prompt_toolkit.filters.has_focus(
+                            self.examine_buffer),
+                    ),
+                ]
+            ),
+            floats=[
+                prompt_toolkit.layout.containers.Float(
+                    right=0, height=1, bottom=1, content=_Arg()),
+                prompt_toolkit.layout.containers.Float(
+                    bottom=1,
+                    left=0,
+                    right=0,
+                    height=1,
+                    content=prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
+                            get_message_tokens),
+                        filter=prompt_toolkit.filters.Condition(
+                            lambda: bool(self.message)),
+                    ),
+                ),
+                prompt_toolkit.layout.containers.Float(
+                    right=0,
+                    height=1,
+                    bottom=1,
+                    content=prompt_toolkit.layout.containers.ConditionalContainer(
+                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
+                            lambda: [("class:loading", " Loading... ")],
+                        ),
+                        filter=prompt_toolkit.filters.Condition(
+                            lambda: self.current_source_info.waiting_for_input_stream
+                        ),
+                    ),
+                ),
+                prompt_toolkit.layout.containers.Float(xcursor=True, ycursor=True,
+                                                       content=prompt_toolkit.layout.menus.MultiColumnCompletionsMenu()),
+            ],
+        )
+
+    def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
         """
         Displayed at the bottom left.
         """
         if self.displaying_help:
-            return HTML(" HELP -- Press <key>[q]</key> when done")
+            return prompt_toolkit.formatted_text.HTML(" HELP -- Press <key>[q]</key> when done")
         else:
-            return HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
+            return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
 
-    def _get_statusbar_right_tokens(self) -> StyleAndTextTuples:
+    def _get_statusbar_right_tokens(self) -> prompt_toolkit.formatted_text.StyleAndTextTuples:
         """
         Displayed at the bottom right.
         """
@@ -354,7 +340,7 @@ class Pager:
             return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
 
     @classmethod
-    def from_pipe(cls, lexer: Optional[Lexer] = None) -> "Pager":
+    def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
         """
         Create a pager from another process that pipes in our stdin.
         """
@@ -386,7 +372,8 @@ class Pager:
         """
         Open this file.
         """
-        lexer = PygmentsLexer.from_filename(filename, sync_from_start=False)
+        lexer = prompt_toolkit.lexers.PygmentsLexer.from_filename(
+            filename, sync_from_start=False)
 
         try:
             source = FileSource(filename, lexer=lexer)
@@ -456,7 +443,7 @@ class Pager:
             self.remove_current_source()
             self.displaying_help = False
 
-    def _after_render(self, app: Application) -> None:
+    def _after_render(self, app: prompt_toolkit.Application) -> None:
         """
         Each time when the rendering is done, we should see whether we need to
         read more data from the input pipe.
@@ -480,7 +467,7 @@ class Pager:
                 lines = [info.window_height * 2 -
                          lines_below_bottom]  # nonlocal
 
-                def handle_content(tokens: StyleAndTextTuples) -> List[str]:
+                def handle_content(tokens: prompt_toolkit.formatted_text.StyleAndTextTuples) -> List[str]:
                     """Handle tokens, update `line_tokens`, decrease
                     line count and return list of characters."""
                     data = []
@@ -497,7 +484,7 @@ class Pager:
                     return data
 
                 def insert_text(list_of_fragments: Sequence[str]) -> None:
-                    document = Document(
+                    document = prompt_toolkit.document.Document(
                         b.text + "".join(list_of_fragments), b.cursor_position
                     )
                     b.set_document(document, bypass_readonly=True)
