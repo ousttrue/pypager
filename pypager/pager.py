@@ -124,7 +124,6 @@ class Pager:
         *,
         style: Optional[prompt_toolkit.styles.Style] = None,
         search_text: Optional[str] = None,
-        titlebar_tokens=None,
         input: Optional[Input] = None,
         output: Optional[Output] = None,
     ) -> None:
@@ -135,8 +134,6 @@ class Pager:
         self.message: Optional[str] = None
         self.displaying_help = False
         self.search_text = search_text
-        self.display_titlebar = bool(titlebar_tokens)
-        self.titlebar_tokens = titlebar_tokens or []
 
         self._dummy_source = DummySource()
 
@@ -215,21 +212,12 @@ class Pager:
     def _layout(self) -> prompt_toolkit.layout.containers.Container:
         has_colon = HasColon(self)
 
-        def get_titlebar_tokens() -> prompt_toolkit.formatted_text.AnyFormattedText:
-            return self.titlebar_tokens
-
         def get_message_tokens():
             return [("class:message", self.message)] if self.message else []
 
         return prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
                 [
-                    prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
-                            get_titlebar_tokens),
-                        filter=prompt_toolkit.filters.Condition(
-                            lambda: self.display_titlebar),
-                    ),
                     self.dynamic_body,
                     self.search_toolbar,
                     prompt_toolkit.widgets.toolbars.SystemToolbar(),
