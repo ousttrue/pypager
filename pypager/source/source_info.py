@@ -5,6 +5,7 @@ import prompt_toolkit.filters
 import prompt_toolkit.layout.containers
 import prompt_toolkit.layout.controls
 import prompt_toolkit.layout.processors
+import prompt_toolkit.widgets.toolbars
 from . import Source
 
 
@@ -71,7 +72,7 @@ class SourceInfo:
 
     _buffer_counter = 0  # Counter to generate unique buffer names.
 
-    def __init__(self, source: Source, highlight_search, search_buffer_control) -> None:
+    def __init__(self, source: Source, highlight_search, search_buffer_control: prompt_toolkit.widgets.toolbars.SearchToolbar) -> None:
         self.source = source
 
         self.buffer = prompt_toolkit.buffer.Buffer(read_only=True)

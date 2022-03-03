@@ -1,14 +1,5 @@
 """
 Pager implementation in Python.
-
-
-class Pager:
-    sources: List[Source]
-    source_info: Dict[Source, SourceInfo]
-
-SourceInfo 
-    => Source
-    => Window
 """
 from typing import List, Optional, Sequence, Union, Callable
 import asyncio
@@ -33,7 +24,6 @@ import prompt_toolkit.document
 import prompt_toolkit.enums
 import prompt_toolkit.lexers
 import prompt_toolkit.styles
-from prompt_toolkit.input.defaults import create_input
 import prompt_toolkit.filters
 from prompt_toolkit.key_binding.bindings.scroll import (
     scroll_half_page_down,
@@ -51,76 +41,11 @@ from .source.pipe_source import FileSource, PipeSource
 from .source.source_info import SourceInfo
 from .style import ui_style
 from .event_property import EventProperty
-from .layout.dynamicbody import DynamicBody
+from .layout import PagerLayout
 
 __all__ = [
     "Pager",
 ]
-
-
-def _layout(dynamic_body: DynamicBody, search_toolbar: prompt_toolkit.widgets.toolbars.SearchToolbar,
-            open_file,
-            has_colon: prompt_toolkit.filters.Condition,
-            waiting: prompt_toolkit.filters.Condition,
-            _get_statusbar_left_tokens, _get_statusbar_right_tokens
-            ) -> prompt_toolkit.layout.containers.Container:
-    from .layout.statusbar import StatusBar
-    from .layout.commandbar import CommandBar
-    from .layout.examinebar import ExamineBar
-    from .layout.message import MessageContainer
-    from .layout.arg import Arg
-    from .layout.loading import Loading
-    statusbar = StatusBar(
-        has_colon, _get_statusbar_left_tokens, _get_statusbar_right_tokens)
-    commandbar = CommandBar(has_colon)
-
-    # def on_source_updated(index: int):
-    #     current_source = self.sources[index]
-    #     statusbar.current_source = current_source
-    # self.current_source_index.callbacks.append(on_source_updated)
-
-    message = MessageContainer()
-
-    # def on_message_updated(text: str):
-    #     self._message.set(text)
-    # self._message.callbacks.append(on_message_updated)
-
-    def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
-        # Open file.
-        open_file(buff.text)
-        return False
-
-    return prompt_toolkit.layout.containers.FloatContainer(
-        content=prompt_toolkit.layout.containers.HSplit(
-            [
-                dynamic_body,
-                search_toolbar,
-                prompt_toolkit.widgets.toolbars.SystemToolbar(),
-                statusbar,
-                commandbar,
-                ExamineBar(open_buffer),
-            ]
-        ),
-        floats=[
-            prompt_toolkit.layout.containers.Float(
-                right=0, height=1, bottom=1, content=Arg()),
-            prompt_toolkit.layout.containers.Float(
-                bottom=1,
-                left=0,
-                right=0,
-                height=1,
-                content=message,
-            ),
-            prompt_toolkit.layout.containers.Float(
-                right=0,
-                height=1,
-                bottom=1,
-                content=Loading(waiting),
-            ),
-            prompt_toolkit.layout.containers.Float(xcursor=True, ycursor=True,
-                                                   content=prompt_toolkit.layout.menus.MultiColumnCompletionsMenu()),
-        ],
-    )
 
 
 class Pager:
@@ -154,24 +79,11 @@ class Pager:
             Source, SourceInfo
         ] = weakref.WeakKeyDictionary()
 
-        # Create prompt_toolkit stuff.
-
-        # Search buffer.
-        self.search_buffer = prompt_toolkit.buffer.Buffer(multiline=False)
-
-        # self = PagerLayout(self)
-        self.dynamic_body = DynamicBody(self)
-
-        # Build an interface.
-
-        self.search_toolbar = prompt_toolkit.widgets.toolbars.SearchToolbar(
-            vi_mode=True, search_buffer=self.search_buffer
-        )
-
         # Input/output.
         # By default, use the stdout device for input.
         # (This makes it possible to pipe data to stdin, but still read key
         # strokes from the TTY).
+        from prompt_toolkit.input.defaults import create_input
         input = create_input(sys.stdout)
 
         #
@@ -245,12 +157,12 @@ class Pager:
             lambda: self.current_source_info.waiting_for_input_stream
         )
 
+        self.layout = PagerLayout(self.open_file, has_colon, waiting,
+                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, lambda: self.current_source_info.window)
+
         self.application = prompt_toolkit.Application(
             input=input,
-            layout=prompt_toolkit.layout.Layout(
-                container=_layout(self.dynamic_body, self.search_toolbar, self.open_file, has_colon, waiting,
-                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens
-                                  )),
+            layout=prompt_toolkit.layout.Layout(container=self.layout.root),
             enable_page_navigation_bindings=True,
             key_bindings=self.key_bindings,
             style=prompt_toolkit.styles.Style.from_dict(ui_style),
@@ -578,7 +490,7 @@ class Pager:
         try:
             return self.source_info[self.current_source]
         except KeyError:
-            return SourceInfo(self.current_source, self.highlight_search, self.search_toolbar.control)
+            return SourceInfo(self.current_source, self.highlight_search, self.layout.search_toolbar.control)
 
     def open_file(self, filename: str) -> None:
         """
@@ -599,7 +511,7 @@ class Pager:
         Add a new :class:`.Source` instance.
         """
         source_info = SourceInfo(
-            source, self.highlight_search, self.search_toolbar.control)
+            source, self.highlight_search, self.layout.search_toolbar.control)
         self.source_info[source] = source_info
 
         self.sources.append(source)
@@ -663,7 +575,7 @@ class Pager:
         # When the bottom is visible, read more input.
         # Try at least `info.window_height`, if this amount of data is
         # available.
-        info = self.dynamic_body.get_render_info()
+        info = self.layout.dynamic_body.get_render_info()
         source = self.current_source
         source_info = self.source_info[source]
         b = source_info.buffer
