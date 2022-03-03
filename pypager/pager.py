@@ -7,6 +7,7 @@ import sys
 import prompt_toolkit
 from prompt_toolkit.application.current import get_app
 import prompt_toolkit.keys
+import prompt_toolkit.search
 import prompt_toolkit.formatted_text
 import prompt_toolkit.key_binding
 import prompt_toolkit.widgets.toolbars
@@ -22,6 +23,7 @@ import prompt_toolkit.enums
 import prompt_toolkit.lexers
 import prompt_toolkit.styles
 import prompt_toolkit.filters
+import prompt_toolkit.utils
 from prompt_toolkit.key_binding.bindings.scroll import (
     scroll_half_page_down,
     scroll_half_page_up,
@@ -134,12 +136,75 @@ class Pager:
         self.bind(self._help, "h", filter=default_focus & ~displaying_help)
         self.bind(self._help, "H", filter=default_focus & ~displaying_help)
 
+        self.bind(self._mark, "m", prompt_toolkit.keys.Keys.Any,
+                  filter=default_focus)
+        self.bind(self._goto_mark, "'",
+                  prompt_toolkit.keys.Keys.Any, filter=default_focus)
+        self.bind(self._gotomark_dot, "c-x",
+                  prompt_toolkit.keys.Keys.ControlX, filter=default_focus)
+
+        self.bind(self._follow, "F", filter=default_focus)
+        self.bind(self._repaint, "r", filter=default_focus)
+        self.bind(self._repaint, "R", filter=default_focus)
+
+        @prompt_toolkit.filters.Condition
+        def search_buffer_is_empty() -> bool:
+            " Returns True when the search buffer is empty. "
+            return self.source_container.search_buffer.text == ""
+
+        self.bind(self._cancel_search,
+                  "backspace",
+                  filter=prompt_toolkit.filters.has_focus(
+                      self.source_container.search_buffer) & search_buffer_is_empty
+                  )
+
+        @prompt_toolkit.filters.Condition
+        def line_wrapping_enable() -> bool:
+            return self.source_container.current_source_info.wrap_lines
+
+        self.bind(self._left, "left", filter=default_focus &
+                  ~line_wrapping_enable)
+        self.bind(self._left, "escape",
+                  "(", filter=default_focus & ~line_wrapping_enable)
+
+        self.bind(self._right, "right", filter=default_focus &
+                  ~line_wrapping_enable)
+        self.bind(self._right, "escape", ")",
+                  filter=default_focus & ~line_wrapping_enable)
+
+        self.bind(self._suspend, "c-z", filter=prompt_toolkit.filters.Condition(
+            lambda: prompt_toolkit.utils.suspend_to_background_supported()))
+        self.bind(self._wrap, "w")
+
+        #
+        # ::: colon :::
+        #
+        self.bind(self._colon, ":", filter=default_focus & ~displaying_help)
+        self.bind(self._next_file, "n", filter=has_colon)
+        self.bind(self._previous_file, "p", filter=has_colon)
+        self.bind(self._remove_source, "d", filter=has_colon)
+        self.bind(self._cancel_colon, "backspace", filter=has_colon)
+        self.bind(self._cancel_colon, "q", filter=has_colon, eager=True)
+        self.bind(self._any, prompt_toolkit.keys.Keys.Any, filter=has_colon)
+
+        #
+        # examine
+        #
+        self.bind(self._examine, prompt_toolkit.keys.Keys.ControlX,
+                  prompt_toolkit.keys.Keys.ControlV, filter=default_focus)
+        self.bind(self._examine, "e", filter=has_colon)
+        self.bind(self._cancel_examine, "c-c",
+                  filter=prompt_toolkit.filters.has_focus("EXAMINE"))
+        self.bind(self._cancel_examine, "c-g",
+                  filter=prompt_toolkit.filters.has_focus("EXAMINE"))
+
         waiting = prompt_toolkit.filters.Condition(
             lambda: self.source_container.current_source_info.waiting_for_input_stream
         )
 
         self.layout = PagerLayout(self.source_container.open_file, has_colon, waiting,
-                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, self.source_container, self.source_container.search_toolbar)
+                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, self.source_container, self.source_container.search_toolbar,
+                                  lambda: self.message)
 
         self.application = prompt_toolkit.Application(
             input=input,
@@ -158,6 +223,20 @@ class Pager:
             self.message = ''
 
         self.application.key_processor.before_key_press += key_pressed
+
+    @classmethod
+    def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
+        """
+        Create a pager from another process that pipes in our stdin.
+        """
+        assert not sys.stdin.isatty()
+        self = cls()
+        self.source_container.add_source(
+            PipeSource(
+                fileno=sys.stdin.fileno(), lexer=lexer, encoding=sys.stdin.encoding
+            )
+        )
+        return self
 
     def on_message(self, msg: str):
         self.message = msg
@@ -279,180 +358,129 @@ class Pager:
         " Toggle search highlighting. "
         self.highlight_search = not self.highlight_search
 
-    # @handle("m", prompt_toolkit.keys.Keys.Any, filter=default_focus)
-    # def _mark(event: E) -> None:
-    #     " Mark current position. "
-    #     source_info = pager.current_source_info
-
-    #     source_info.marks[event.data] = (
-    #         event.current_buffer.cursor_position,
-    #         source_info.window.vertical_scroll,
-    #     )
-
-    # @handle("'", prompt_toolkit.keys.Keys.Any, filter=default_focus)
-    # def _goto_mark(event: E) -> None:
-    #     " Go to a previously marked position. "
-    #     go_to_mark(event, event.data)
-
-    # @handle("c-x", prompt_toolkit.keys.Keys.ControlX, filter=default_focus)
-    # def _gotomark_dot(event: E) -> None:
-    #     " Same as '. "
-    #     go_to_mark(event, ".")
-
-    # def go_to_mark(event: E, mark: str) -> None:
-    #     b = event.current_buffer
-    #     source_info = pager.current_source_info
-    #     try:
-    #         if mark == "^":  # Start of file.
-    #             cursor_pos, vertical_scroll = 0, 0
-    #         elif mark == "$":  # End of file - mark.
-    #             cursor_pos, vertical_scroll = len(b.text), 0
-    #         else:  # Custom mark.
-    #             cursor_pos, vertical_scroll = source_info.marks[mark]
-    #     except KeyError:
-    #         pass  # TODO: show warning.
-    #     else:
-    #         b.cursor_position = cursor_pos
-    #         source_info.window.vertical_scroll = vertical_scroll
-
-    # @handle("F", filter=default_focus)
-    # def _follow(event: E) -> None:
-    #     " Forward forever, like 'tail -f'. "
-    #     pager.forward_forever = True
-
-    # @handle("r", filter=default_focus)
-    # @handle("R", filter=default_focus)
-    # def _repaint(event: E) -> None:
-    #     event.app.renderer.clear()
-
-    # @prompt_toolkit.filters.Condition
-    # def search_buffer_is_empty() -> bool:
-    #     " Returns True when the search buffer is empty. "
-    #     return pager.search_buffer.text == ""
-
-    # @handle(
-    #     "backspace",
-    #     filter=prompt_toolkit.filters.has_focus(
-    #         pager.search_buffer) & search_buffer_is_empty,
-    # )
-    # def _cancel_search(event: E) -> None:
-    #     " Cancel search when backspace is pressed. "
-    #     prompt_toolkit.search.stop_search()
-
-    # @prompt_toolkit.filters.Condition
-    # def line_wrapping_enable() -> bool:
-    #     return pager.current_source_info.wrap_lines
-
-    # @handle("left", filter=default_focus & ~line_wrapping_enable)
-    # @handle("escape", "(", filter=default_focus & ~line_wrapping_enable)
-    # def _left(event: E) -> None:
-    #     " Scroll half page to the left. "
-    #     w = event.app.layout.current_window
-    #     b = event.app.current_buffer
-
-    #     if w and w.render_info:
-    #         info = w.render_info
-    #         amount = info.window_width // 2
-
-    #         # Move cursor horizontally.
-    #         value = b.cursor_position - min(
-    #             amount, len(b.document.current_line_before_cursor)
-    #         )
-    #         b.cursor_position = value
-
-    #         # Scroll.
-    #         w.horizontal_scroll = max(0, w.horizontal_scroll - amount)
-
-    # @handle("right", filter=default_focus & ~line_wrapping_enable)
-    # @handle("escape", ")", filter=default_focus & ~line_wrapping_enable)
-    # def _right(event: E) -> None:
-    #     " Scroll half page to the right. "
-    #     w = event.app.layout.current_window
-    #     b = event.app.current_buffer
-
-    #     if w and w.render_info:
-    #         info = w.render_info
-    #         amount = info.window_width // 2
-
-    #         # Move the cursor first to a visible line that is long enough to
-    #         # have the cursor visible after scrolling. (Otherwise, the Window
-    #         # will scroll back.)
-    #         xpos = w.horizontal_scroll + amount
-
-    #         for line in info.displayed_lines:
-    #             if len(b.document.lines[line]) >= xpos:
-    #                 b.cursor_position = b.document.translate_row_col_to_index(
-    #                     line, xpos
-    #                 )
-    #                 break
-
-    #         # Scroll.
-    #         w.horizontal_scroll = max(0, w.horizontal_scroll + amount)
-
-    # @handle(":", filter=default_focus & ~displaying_help)
-    # def _colon(event: E) -> None:
-    #     pager.in_colon_mode = True
-
-    # @handle("n", filter=has_colon)
-    # def _next_file(event: E) -> None:
-    #     " Go to next file. "
-    #     pager.focus_next_source()
-
-    # @handle("p", filter=has_colon)
-    # def _previous_file(event: E) -> None:
-    #     " Go to previous file. "
-    #     pager.focus_previous_source()
-
-    # @handle("e", filter=has_colon)
-    # @handle(prompt_toolkit.keys.Keys.ControlX, prompt_toolkit.keys.Keys.ControlV, filter=default_focus)
-    # def _examine(event: E) -> None:
-    #     event.app.layout.focus(pager.layout.examine_control)
-    #     pager.in_colon_mode = False
-
-    # @handle("d", filter=has_colon)
-    # def _remove_source(event: E) -> None:
-    #     pager.remove_current_source()
-
-    # @handle("backspace", filter=has_colon)
-    # @handle("q", filter=has_colon, eager=True)
-    # def _cancel_colon(event: E) -> None:
-    #     pager.in_colon_mode = False
-
-    # @handle(prompt_toolkit.keys.Keys.Any, filter=has_colon)
-    # def _any(event: E) -> None:
-    #     pager.in_colon_mode = False
-    #     pager.message = "No command."
-
-    # @handle("c-c", filter=prompt_toolkit.filters.has_focus("EXAMINE"))
-    # @handle("c-g", filter=prompt_toolkit.filters.has_focus("EXAMINE"))
-    # def _cancel_examine(event: E) -> None:
-    #     " Cancel 'Examine' input. "
-    #     event.app.layout.focus(pager.current_source_info.window)
-
-    # @handle("c-z", filter=prompt_toolkit.filters.Condition(lambda: prompt_toolkit.utils.suspend_to_background_supported()))
-    # def _suspend(event: E) -> None:
-    #     " Suspend to bakground. "
-    #     event.app.suspend_to_background()
-
-    # @handle("w")
-    # def _suspend(event: E) -> None:
-    #     " Enable/disable line wrapping. "
-    #     source_info = pager.current_source_info
-    #     source_info.wrap_lines = not source_info.wrap_lines
-
-    @classmethod
-    def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
-        """
-        Create a pager from another process that pipes in our stdin.
-        """
-        assert not sys.stdin.isatty()
-        self = cls()
-        self.source_container.add_source(
-            PipeSource(
-                fileno=sys.stdin.fileno(), lexer=lexer, encoding=sys.stdin.encoding
-            )
+    def _mark(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Mark current position. "
+        source_info = self.source_container.current_source_info
+        source_info.marks[event.data] = (
+            event.current_buffer.cursor_position,
+            source_info.window.vertical_scroll,
         )
-        return self
+
+    def _goto_mark(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to a previously marked position. "
+        self.go_to_mark(event, event.data)
+
+    def _gotomark_dot(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Same as '. "
+        self.go_to_mark(event, ".")
+
+    def go_to_mark(self, event: prompt_toolkit.key_binding.KeyPressEvent, mark: str) -> None:
+        b = event.current_buffer
+        source_info = self.source_container.current_source_info
+        try:
+            if mark == "^":  # Start of file.
+                cursor_pos, vertical_scroll = 0, 0
+            elif mark == "$":  # End of file - mark.
+                cursor_pos, vertical_scroll = len(b.text), 0
+            else:  # Custom mark.
+                cursor_pos, vertical_scroll = source_info.marks[mark]
+        except KeyError:
+            pass  # TODO: show warning.
+        else:
+            b.cursor_position = cursor_pos
+            source_info.window.vertical_scroll = vertical_scroll
+
+    def _follow(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Forward forever, like 'tail -f'. "
+        self.forward_forever = True
+
+    def _repaint(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        event.app.renderer.clear()
+
+    def _cancel_search(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Cancel search when backspace is pressed. "
+        prompt_toolkit.search.stop_search()
+
+    def _left(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scroll half page to the left. "
+        w = event.app.layout.current_window
+        b = event.app.current_buffer
+
+        if w and w.render_info:
+            info = w.render_info
+            amount = info.window_width // 2
+
+            # Move cursor horizontally.
+            value = b.cursor_position - min(
+                amount, len(b.document.current_line_before_cursor)
+            )
+            b.cursor_position = value
+
+            # Scroll.
+            w.horizontal_scroll = max(0, w.horizontal_scroll - amount)
+
+    def _right(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scroll half page to the right. "
+        w = event.app.layout.current_window
+        b = event.app.current_buffer
+
+        if w and w.render_info:
+            info = w.render_info
+            amount = info.window_width // 2
+
+            # Move the cursor first to a visible line that is long enough to
+            # have the cursor visible after scrolling. (Otherwise, the Window
+            # will scroll back.)
+            xpos = w.horizontal_scroll + amount
+
+            for line in info.displayed_lines:
+                if len(b.document.lines[line]) >= xpos:
+                    b.cursor_position = b.document.translate_row_col_to_index(
+                        line, xpos
+                    )
+                    break
+
+            # Scroll.
+            w.horizontal_scroll = max(0, w.horizontal_scroll + amount)
+
+    def _colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self.in_colon_mode = True
+
+    def _next_file(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to next file. "
+        self.source_container.focus_next_source()
+
+    def _previous_file(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to previous file. "
+        self.source_container.focus_previous_source()
+
+    def _examine(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        event.app.layout.focus(self.layout.examine.examine_buffer)
+        self.in_colon_mode = False
+
+    def _remove_source(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self.source_container.remove_current_source()
+
+    def _cancel_colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self.in_colon_mode = False
+
+    def _any(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self.in_colon_mode = False
+        self.message = "No command."
+
+    def _cancel_examine(self,  event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Cancel 'Examine' input. "
+        event.app.layout.focus(
+            self.source_container.current_source_info.window)
+
+    def _suspend(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Suspend to bakground. "
+        event.app.suspend_to_background()
+
+    def _wrap(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Enable/disable line wrapping. "
+        source_info = self.source_container.current_source_info
+        source_info.wrap_lines = not source_info.wrap_lines
 
     def display_help(self) -> None:
         """

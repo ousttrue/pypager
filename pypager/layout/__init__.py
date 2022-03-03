@@ -1,3 +1,4 @@
+from typing import Callable
 import prompt_toolkit.filters
 import prompt_toolkit.buffer
 import prompt_toolkit.widgets.toolbars
@@ -19,18 +20,21 @@ class PagerLayout:
                  waiting: prompt_toolkit.filters.Condition,
                  _get_statusbar_left_tokens, _get_statusbar_right_tokens,
                  source_container: SourceContainer,
-                 search_toolbar: prompt_toolkit.widgets.toolbars.SearchToolbar):
+                 search_toolbar: prompt_toolkit.widgets.toolbars.SearchToolbar,
+                 get_message: Callable[[], str]):
 
         statusbar = StatusBar(
             has_colon, _get_statusbar_left_tokens, _get_statusbar_right_tokens)
         commandbar = CommandBar(has_colon)
 
-        message = MessageContainer()
+        message = MessageContainer(get_message)
 
         def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
             # Open file.
             open_file(buff.text)
             return False
+
+        self.examine = ExamineBar(open_buffer)
 
         self.root = prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
@@ -40,7 +44,7 @@ class PagerLayout:
                     prompt_toolkit.widgets.toolbars.SystemToolbar(),
                     statusbar,
                     commandbar,
-                    ExamineBar(open_buffer),
+                    self.examine,
                 ]
             ),
             floats=[

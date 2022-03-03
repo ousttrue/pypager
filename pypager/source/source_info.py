@@ -52,7 +52,7 @@ def create_buffer_window(source_info: "SourceInfo", highlight_search, search_buf
         return source_info.wrap_lines
 
     return prompt_toolkit.layout.containers.Window(
-        always_hide_cursor=True,
+        # always_hide_cursor=True,
         wrap_lines=wrap_lines,
         content=prompt_toolkit.layout.controls.BufferControl(
             buffer=source_info.buffer,
