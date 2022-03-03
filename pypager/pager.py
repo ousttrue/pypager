@@ -33,7 +33,7 @@ import prompt_toolkit.styles
 from prompt_toolkit.input.defaults import create_input
 import prompt_toolkit.filters
 
-from .filters import HasColon
+
 from .help import HELP
 from .key_bindings import create_key_bindings
 from .source import DummySource, FormattedTextSource, Source
@@ -62,8 +62,8 @@ class Pager:
         # Index in `self.sources`.
         self.current_source_index = EventProperty[int](0)
         self.highlight_search = True
-        self.in_colon_mode = False
-        self.message = EventProperty[str]('')
+        self._in_colon_mode = EventProperty[bool](False)
+        self._message = EventProperty[str]('')
         self.displaying_help = False
 
         self._dummy_source = DummySource()
@@ -114,30 +114,44 @@ class Pager:
 
         # Hide message when a key is pressed.
         def key_pressed(_) -> None:
-            self.message.set('')
+            self._message.set('')
 
         self.application.key_processor.before_key_press += key_pressed
 
+    @property
+    def in_colon_mode(self) -> bool:
+        return self._in_colon_mode.value
+
+    @in_colon_mode.setter
+    def in_colon_mode(self, value: bool):
+        self._in_colon_mode.set(value)
+
     def _layout(self) -> prompt_toolkit.layout.containers.Container:
-        has_colon = HasColon(self)
+        # has_colon = HasColon(self)
 
         from .layout.statusbar import StatusBar
         from .layout.commandbar import CommandBar
         from .layout.examinebar import ExamineBar
         from .layout.message import MessageContainer
         from .layout.arg import Arg
-        statusbar = StatusBar(self.source_info, has_colon)
+        statusbar = StatusBar(self.source_info)
+        commandbar = CommandBar()
 
         def on_source_updated(index: int):
             current_source = self.sources[index]
             statusbar.current_source = current_source
         self.current_source_index.callbacks.append(on_source_updated)
 
+        def on_has_colon(has: bool):
+            statusbar.in_colon_mode.value = has
+            commandbar.in_colon_mode.value = has
+        self._in_colon_mode.callbacks.append(on_has_colon)
+
         message = MessageContainer()
 
         def on_message_updated(text: str):
-            self.message.set(text)
-        self.message.callbacks.append(on_message_updated)
+            self._message.set(text)
+        self._message.callbacks.append(on_message_updated)
 
         return prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
@@ -146,7 +160,7 @@ class Pager:
                     self.search_toolbar,
                     prompt_toolkit.widgets.toolbars.SystemToolbar(),
                     statusbar,
-                    CommandBar(has_colon),
+                    commandbar,
                     ExamineBar(self.open_file),
                 ]
             ),
@@ -217,7 +231,7 @@ class Pager:
         try:
             source = FileSource(filename, lexer=lexer)
         except IOError as e:
-            self.message.set("{}".format(e))
+            self._message.set("{}".format(e))
         else:
             self.add_source(source)
 
@@ -251,19 +265,19 @@ class Pager:
             # Remove the last source.
             self.sources.remove(current_source)
         else:
-            self.message.set("Can't remove the last buffer.")
+            self._message.set("Can't remove the last buffer.")
 
     def focus_previous_source(self) -> None:
         self.current_source_index.set((
             self.current_source_index.value - 1) % len(self.sources))
         self.application.layout.focus(self.current_source_info.window)
-        self.in_colon_mode = False
+        self._in_colon_mode.set(False)
 
     def focus_next_source(self) -> None:
         self.current_source_index.set((
             self.current_source_index.value + 1) % len(self.sources))
         self.application.layout.focus(self.current_source_info.window)
-        self.in_colon_mode = False
+        self._in_colon_mode.set(False)
 
     def display_help(self) -> None:
         """

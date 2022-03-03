@@ -5,10 +5,14 @@ import prompt_toolkit.enums
 import prompt_toolkit.filters
 import prompt_toolkit.formatted_text
 from ..source import Source
+from ..filters import BoolFilter
 
 
 class StatusBar(prompt_toolkit.layout.containers.ConditionalContainer):
-    def __init__(self, source_info, has_colon) -> None:
+    def __init__(self, source_info) -> None:
+
+        self.in_colon_mode = BoolFilter(False)
+
         self.source_info = source_info
         super().__init__(
             content=prompt_toolkit.layout.containers.VSplit(
@@ -32,7 +36,7 @@ class StatusBar(prompt_toolkit.layout.containers.ConditionalContainer):
             ),
             filter=~prompt_toolkit.filters.HasSearch()
             & ~prompt_toolkit.filters.has_focus(prompt_toolkit.enums.SYSTEM_BUFFER)
-            & ~has_colon
+            & ~self.in_colon_mode
             & ~prompt_toolkit.filters.has_focus("EXAMINE"),
         )
         self.displaying_help = False

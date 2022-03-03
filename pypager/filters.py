@@ -1,30 +1,29 @@
 from typing import TYPE_CHECKING
 
-from prompt_toolkit.filters import Filter
+import prompt_toolkit.filters
 
 if TYPE_CHECKING:
     from .pager import Pager
 
 __all__ = [
-    "HasColon",
     "DisplayingHelp",
 ]
 
 
-class _PagerFilter(Filter):
+class _PagerFilter(prompt_toolkit.filters.Filter):
     def __init__(self, pager: "Pager") -> None:
         self.pager = pager
-
-
-class HasColon(_PagerFilter):
-    """
-    The user typed a ':'.
-    """
-
-    def __call__(self) -> bool:
-        return self.pager.in_colon_mode
 
 
 class DisplayingHelp(_PagerFilter):
     def __call__(self) -> bool:
         return self.pager.displaying_help
+
+
+class BoolFilter(prompt_toolkit.filters.Filter):
+    def __init__(self, init=False) -> None:
+        super().__init__()
+        self.value = init
+
+    def __call__(self) -> bool:
+        return self.value
