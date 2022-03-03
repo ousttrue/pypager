@@ -51,10 +51,76 @@ from .source.pipe_source import FileSource, PipeSource
 from .source.source_info import SourceInfo
 from .style import ui_style
 from .event_property import EventProperty
+from .layout.dynamicbody import DynamicBody
 
 __all__ = [
     "Pager",
 ]
+
+
+def _layout(dynamic_body: DynamicBody, search_toolbar: prompt_toolkit.widgets.toolbars.SearchToolbar,
+            open_file,
+            has_colon: prompt_toolkit.filters.Condition,
+            waiting: prompt_toolkit.filters.Condition,
+            _get_statusbar_left_tokens, _get_statusbar_right_tokens
+            ) -> prompt_toolkit.layout.containers.Container:
+    from .layout.statusbar import StatusBar
+    from .layout.commandbar import CommandBar
+    from .layout.examinebar import ExamineBar
+    from .layout.message import MessageContainer
+    from .layout.arg import Arg
+    from .layout.loading import Loading
+    statusbar = StatusBar(
+        has_colon, _get_statusbar_left_tokens, _get_statusbar_right_tokens)
+    commandbar = CommandBar(has_colon)
+
+    # def on_source_updated(index: int):
+    #     current_source = self.sources[index]
+    #     statusbar.current_source = current_source
+    # self.current_source_index.callbacks.append(on_source_updated)
+
+    message = MessageContainer()
+
+    # def on_message_updated(text: str):
+    #     self._message.set(text)
+    # self._message.callbacks.append(on_message_updated)
+
+    def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
+        # Open file.
+        open_file(buff.text)
+        return False
+
+    return prompt_toolkit.layout.containers.FloatContainer(
+        content=prompt_toolkit.layout.containers.HSplit(
+            [
+                dynamic_body,
+                search_toolbar,
+                prompt_toolkit.widgets.toolbars.SystemToolbar(),
+                statusbar,
+                commandbar,
+                ExamineBar(open_buffer),
+            ]
+        ),
+        floats=[
+            prompt_toolkit.layout.containers.Float(
+                right=0, height=1, bottom=1, content=Arg()),
+            prompt_toolkit.layout.containers.Float(
+                bottom=1,
+                left=0,
+                right=0,
+                height=1,
+                content=message,
+            ),
+            prompt_toolkit.layout.containers.Float(
+                right=0,
+                height=1,
+                bottom=1,
+                content=Loading(waiting),
+            ),
+            prompt_toolkit.layout.containers.Float(xcursor=True, ycursor=True,
+                                                   content=prompt_toolkit.layout.menus.MultiColumnCompletionsMenu()),
+        ],
+    )
 
 
 class Pager:
@@ -94,7 +160,6 @@ class Pager:
         self.search_buffer = prompt_toolkit.buffer.Buffer(multiline=False)
 
         # self = PagerLayout(self)
-        from .layout.dynamicbody import DynamicBody
         self.dynamic_body = DynamicBody(self)
 
         # Build an interface.
@@ -176,9 +241,16 @@ class Pager:
         self.bind(self._help, "h", filter=default_focus & ~displaying_help)
         self.bind(self._help, "H", filter=default_focus & ~displaying_help)
 
+        waiting = prompt_toolkit.filters.Condition(
+            lambda: self.current_source_info.waiting_for_input_stream
+        )
+
         self.application = prompt_toolkit.Application(
             input=input,
-            layout=prompt_toolkit.layout.Layout(container=self._layout()),
+            layout=prompt_toolkit.layout.Layout(
+                container=_layout(self.dynamic_body, self.search_toolbar, self.open_file, has_colon, waiting,
+                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens
+                                  )),
             enable_page_navigation_bindings=True,
             key_bindings=self.key_bindings,
             style=prompt_toolkit.styles.Style.from_dict(ui_style),
@@ -193,6 +265,39 @@ class Pager:
             self._message.set('')
 
         self.application.key_processor.before_key_press += key_pressed
+
+    def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
+        """
+        Displayed at the bottom left.
+        """
+        if self.displaying_help:
+            return prompt_toolkit.formatted_text.HTML(" HELP -- Press <key>[q]</key> when done")
+        else:
+            return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
+
+    def _get_statusbar_right_tokens(self) -> prompt_toolkit.formatted_text.StyleAndTextTuples:
+        """
+        Displayed at the bottom right.
+        """
+        source_info = self.source_info[self.current_source]
+        buffer = source_info.buffer
+        document = buffer.document
+        row = document.cursor_position_row + 1
+        col = document.cursor_position_col + 1
+
+        if source_info.wrap_lines:
+            col = "WRAP"
+
+        if self.current_source.eof():
+            percentage = int(100 * row / document.line_count)
+            return [
+                (
+                    "class:statusbar,cursor-position",
+                    " (%s,%s) %s%% " % (row, col, percentage),
+                )
+            ]
+        else:
+            return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
 
     def bind(self, func: prompt_toolkit.key_binding.key_bindings.KeyHandlerCallable, *keys: Union[prompt_toolkit.keys.Keys, str],
              filter: prompt_toolkit.filters.FilterOrBool = True,
@@ -445,67 +550,6 @@ class Pager:
     @in_colon_mode.setter
     def in_colon_mode(self, value: bool):
         self._in_colon_mode.set(value)
-
-    def _layout(self) -> prompt_toolkit.layout.containers.Container:
-        from .layout.statusbar import StatusBar
-        from .layout.commandbar import CommandBar
-        from .layout.examinebar import ExamineBar
-        from .layout.message import MessageContainer
-        from .layout.arg import Arg
-        has_colon = prompt_toolkit.filters.Condition(
-            lambda: self.in_colon_mode)
-        statusbar = StatusBar(self.source_info, has_colon)
-        commandbar = CommandBar(has_colon)
-
-        def on_source_updated(index: int):
-            current_source = self.sources[index]
-            statusbar.current_source = current_source
-        self.current_source_index.callbacks.append(on_source_updated)
-
-        message = MessageContainer()
-
-        def on_message_updated(text: str):
-            self._message.set(text)
-        self._message.callbacks.append(on_message_updated)
-
-        return prompt_toolkit.layout.containers.FloatContainer(
-            content=prompt_toolkit.layout.containers.HSplit(
-                [
-                    self.dynamic_body,
-                    self.search_toolbar,
-                    prompt_toolkit.widgets.toolbars.SystemToolbar(),
-                    statusbar,
-                    commandbar,
-                    ExamineBar(self.open_file),
-                ]
-            ),
-            floats=[
-                prompt_toolkit.layout.containers.Float(
-                    right=0, height=1, bottom=1, content=Arg()),
-                prompt_toolkit.layout.containers.Float(
-                    bottom=1,
-                    left=0,
-                    right=0,
-                    height=1,
-                    content=message,
-                ),
-                prompt_toolkit.layout.containers.Float(
-                    right=0,
-                    height=1,
-                    bottom=1,
-                    content=prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
-                            lambda: [("class:loading", " Loading... ")],
-                        ),
-                        filter=prompt_toolkit.filters.Condition(
-                            lambda: self.current_source_info.waiting_for_input_stream
-                        ),
-                    ),
-                ),
-                prompt_toolkit.layout.containers.Float(xcursor=True, ycursor=True,
-                                                       content=prompt_toolkit.layout.menus.MultiColumnCompletionsMenu()),
-            ],
-        )
 
     @classmethod
     def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":

@@ -8,12 +8,8 @@ import prompt_toolkit.filters
 
 
 class ExamineBar(prompt_toolkit.layout.containers.ConditionalContainer):
-    def __init__(self, open_file) -> None:
+    def __init__(self, open_buffer) -> None:
         # Buffer for the 'Examine:' input.
-        def open_buffer(buff: prompt_toolkit.buffer.Buffer) -> bool:
-            # Open file.
-            open_file(buff.text)
-            return False
 
         self.examine_buffer = prompt_toolkit.buffer.Buffer(
             name="EXAMINE",
