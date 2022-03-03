@@ -11,17 +11,17 @@ import prompt_toolkit.lexers
 import prompt_toolkit.buffer
 import prompt_toolkit.widgets.toolbars
 
-from ..event_property import EventProperty
 from .source_info import SourceInfo
 from .pipe_source import FileSource
 from . import Source, DummySource
 
 
 class SourceContainer(prompt_toolkit.layout.containers.Container):
-    def __init__(self) -> None:
+    def __init__(self, on_message: Callable[[str], None]) -> None:
+        self.on_message = on_message
         self.sources: List[Source] = []
         # Index in `self.sources`.
-        self.current_source_index = EventProperty[int](0)
+        self.current_source_index = 0
         self.highlight_search = True
 
         self._dummy_source = DummySource()
@@ -80,7 +80,7 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
     def current_source(self) -> Source:
         " The current `Source`. "
         try:
-            return self.sources[self.current_source_index.value]
+            return self.sources[self.current_source_index]
         except IndexError:
             return self._dummy_source
 
@@ -101,7 +101,7 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
         try:
             source = FileSource(filename, lexer=lexer)
         except IOError as e:
-            self._message.set("{}".format(e))
+            self.on_message("{}".format(e))
         else:
             self.add_source(source)
 
@@ -116,7 +116,7 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
         self.sources.append(source)
 
         # Focus
-        self.current_source_index.set(len(self.sources) - 1)
+        self.current_source_index = len(self.sources) - 1
         try:
             get_app().layout.focus(source_info.window)
         except Exception:
@@ -138,17 +138,17 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
             # Remove the last source.
             self.sources.remove(current_source)
         else:
-            self._message.set("Can't remove the last buffer.")
+            self.on_message("Can't remove the last buffer.")
 
     def focus_previous_source(self) -> None:
-        self.current_source_index.set((
-            self.current_source_index.value - 1) % len(self.sources))
+        self.current_source_index = (
+            self.current_source_index - 1) % len(self.sources)
         get_app().layout.focus(self.current_source_info.window)
         # self._in_colon_mode.set(False)
 
     def focus_next_source(self) -> None:
-        self.current_source_index.set((
-            self.current_source_index.value + 1) % len(self.sources))
+        self.current_source_index = (
+            self.current_source_index + 1) % len(self.sources)
         get_app().layout.focus(self.current_source_info.window)
         # self._in_colon_mode.set(False)
 

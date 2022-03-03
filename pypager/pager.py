@@ -37,7 +37,6 @@ from .source import FormattedTextSource
 from .source.pipe_source import PipeSource
 from .source.sourcecontainer import SourceContainer
 from .style import ui_style
-from .event_property import EventProperty
 from .layout import PagerLayout
 
 __all__ = [
@@ -56,9 +55,9 @@ class Pager:
     """
 
     def __init__(self) -> None:
-        self.source_container = SourceContainer()
-        self._in_colon_mode = EventProperty[bool](False)
-        self._message = EventProperty[str]('')
+        self.source_container = SourceContainer(self.on_message)
+        self.in_colon_mode = False
+        self.message = ''
         self.displaying_help = False
 
         # Input/output.
@@ -156,9 +155,12 @@ class Pager:
 
         # Hide message when a key is pressed.
         def key_pressed(_) -> None:
-            self._message.set('')
+            self.message = ''
 
         self.application.key_processor.before_key_press += key_pressed
+
+    def on_message(self, msg: str):
+        self.message = msg
 
     def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
         """
@@ -266,8 +268,8 @@ class Pager:
 
     def _print_filename(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Print the current file name. "
-        self._message.set(" {} ".format(
-            self.source_container.current_source.get_name()))
+        self.message = " {} ".format(
+            self.source_container.current_source.get_name())
 
     def _help(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Display Help. "
@@ -437,14 +439,6 @@ class Pager:
     #     " Enable/disable line wrapping. "
     #     source_info = pager.current_source_info
     #     source_info.wrap_lines = not source_info.wrap_lines
-
-    @property
-    def in_colon_mode(self) -> bool:
-        return self._in_colon_mode.value
-
-    @in_colon_mode.setter
-    def in_colon_mode(self, value: bool):
-        self._in_colon_mode.set(value)
 
     @classmethod
     def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
