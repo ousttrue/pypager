@@ -63,7 +63,7 @@ class Pager:
         self.current_source_index = EventProperty[int](0)
         self.highlight_search = True
         self.in_colon_mode = False
-        self.message: Optional[str] = None
+        self.message = EventProperty[str]('')
         self.displaying_help = False
 
         self._dummy_source = DummySource()
@@ -114,19 +114,17 @@ class Pager:
 
         # Hide message when a key is pressed.
         def key_pressed(_) -> None:
-            self.message = None
+            self.message.set('')
 
         self.application.key_processor.before_key_press += key_pressed
 
     def _layout(self) -> prompt_toolkit.layout.containers.Container:
         has_colon = HasColon(self)
 
-        def get_message_tokens():
-            return [("class:message", self.message)] if self.message else []
-
         from .layout.statusbar import StatusBar
         from .layout.commandbar import CommandBar
         from .layout.examinebar import ExamineBar
+        from .layout.message import MessageContainer
         from .layout.arg import Arg
         statusbar = StatusBar(self.source_info, has_colon)
 
@@ -134,6 +132,12 @@ class Pager:
             current_source = self.sources[index]
             statusbar.current_source = current_source
         self.current_source_index.callbacks.append(on_source_updated)
+
+        message = MessageContainer()
+
+        def on_message_updated(text: str):
+            self.message.set(text)
+        self.message.callbacks.append(on_message_updated)
 
         return prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
@@ -154,12 +158,7 @@ class Pager:
                     left=0,
                     right=0,
                     height=1,
-                    content=prompt_toolkit.layout.containers.ConditionalContainer(
-                        content=prompt_toolkit.widgets.toolbars.FormattedTextToolbar(
-                            get_message_tokens),
-                        filter=prompt_toolkit.filters.Condition(
-                            lambda: bool(self.message)),
-                    ),
+                    content=message,
                 ),
                 prompt_toolkit.layout.containers.Float(
                     right=0,
@@ -218,7 +217,7 @@ class Pager:
         try:
             source = FileSource(filename, lexer=lexer)
         except IOError as e:
-            self.message = "{}".format(e)
+            self.message.set("{}".format(e))
         else:
             self.add_source(source)
 
@@ -252,7 +251,7 @@ class Pager:
             # Remove the last source.
             self.sources.remove(current_source)
         else:
-            self.message = "Can't remove the last buffer."
+            self.message.set("Can't remove the last buffer.")
 
     def focus_previous_source(self) -> None:
         self.current_source_index.set((
