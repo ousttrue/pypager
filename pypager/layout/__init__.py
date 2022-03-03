@@ -1,4 +1,3 @@
-from typing import Callable
 import prompt_toolkit.filters
 import prompt_toolkit.buffer
 import prompt_toolkit.widgets.toolbars
@@ -10,6 +9,7 @@ from .examinebar import ExamineBar
 from .message import MessageContainer
 from .arg import Arg
 from .loading import Loading
+from ..source.sourcecontainer import SourceContainer
 
 
 class PagerLayout:
@@ -18,20 +18,8 @@ class PagerLayout:
                  has_colon: prompt_toolkit.filters.Condition,
                  waiting: prompt_toolkit.filters.Condition,
                  _get_statusbar_left_tokens, _get_statusbar_right_tokens,
-                 current_source_window
-                 ):
-        # Search buffer.
-        self.search_buffer = prompt_toolkit.buffer.Buffer(multiline=False)
-
-        # self = PagerLayout(self)
-        from .sourcecontainer import SourceContainer
-        self.dynamic_body = SourceContainer(current_source_window)
-
-        # Build an interface.
-
-        self.search_toolbar = prompt_toolkit.widgets.toolbars.SearchToolbar(
-            vi_mode=True, search_buffer=self.search_buffer
-        )
+                 source_container: SourceContainer,
+                 search_toolbar: prompt_toolkit.widgets.toolbars.SearchToolbar):
 
         statusbar = StatusBar(
             has_colon, _get_statusbar_left_tokens, _get_statusbar_right_tokens)
@@ -47,8 +35,8 @@ class PagerLayout:
         self.root = prompt_toolkit.layout.containers.FloatContainer(
             content=prompt_toolkit.layout.containers.HSplit(
                 [
-                    self.dynamic_body,
-                    self.search_toolbar,
+                    source_container,
+                    search_toolbar,
                     prompt_toolkit.widgets.toolbars.SystemToolbar(),
                     statusbar,
                     commandbar,

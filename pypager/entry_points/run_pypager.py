@@ -34,7 +34,8 @@ def run():
             lexer = PygmentsLexer.from_filename(
                 filename, sync_from_start=False)
 
-            pager.add_source(FileSource(filename, lexer=lexer))
+            info = pager.source_container.add_source(FileSource(filename, lexer=lexer))
+            pager.application.layout.focus(info.window)
 
     # Run UI.
     pager.application.run()

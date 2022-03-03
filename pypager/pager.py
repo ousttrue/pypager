@@ -1,11 +1,8 @@
 """
 Pager implementation in Python.
 """
-from typing import List, Optional, Sequence, Union, Callable
-import asyncio
+from typing import Optional, Union, Callable
 import sys
-import threading
-import weakref
 
 import prompt_toolkit
 from prompt_toolkit.application.current import get_app
@@ -36,9 +33,9 @@ from prompt_toolkit.key_binding.bindings.scroll import (
 
 
 from .help import HELP
-from .source import DummySource, FormattedTextSource, Source
-from .source.pipe_source import FileSource, PipeSource
-from .source.source_info import SourceInfo
+from .source import FormattedTextSource
+from .source.pipe_source import PipeSource
+from .source.sourcecontainer import SourceContainer
 from .style import ui_style
 from .event_property import EventProperty
 from .layout import PagerLayout
@@ -59,25 +56,10 @@ class Pager:
     """
 
     def __init__(self) -> None:
-        self.sources: List[Source] = []
-        # Index in `self.sources`.
-        self.current_source_index = EventProperty[int](0)
-        self.highlight_search = True
+        self.source_container = SourceContainer()
         self._in_colon_mode = EventProperty[bool](False)
         self._message = EventProperty[str]('')
         self.displaying_help = False
-
-        self._dummy_source = DummySource()
-
-        # When this is True, always make sure that the cursor goes to the
-        # bottom of the visible content. This is similar to 'tail -f'.
-        self.forward_forever = False
-
-        # Status information for all sources. Source -> SourceInfo.
-        # (Remember this info as long as the Source object exists.)
-        self.source_info: weakref.WeakKeyDictionary[
-            Source, SourceInfo
-        ] = weakref.WeakKeyDictionary()
 
         # Input/output.
         # By default, use the stdout device for input.
@@ -94,7 +76,7 @@ class Pager:
         @prompt_toolkit.filters.Condition
         def default_focus() -> bool:
             app = get_app()
-            return app.layout.current_window == self.current_source_info.window
+            return app.layout.current_window == self.source_container.current_source_info.window
 
         @prompt_toolkit.filters.Condition
         def has_colon() -> bool:
@@ -154,11 +136,11 @@ class Pager:
         self.bind(self._help, "H", filter=default_focus & ~displaying_help)
 
         waiting = prompt_toolkit.filters.Condition(
-            lambda: self.current_source_info.waiting_for_input_stream
+            lambda: self.source_container.current_source_info.waiting_for_input_stream
         )
 
-        self.layout = PagerLayout(self.open_file, has_colon, waiting,
-                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, lambda: self.current_source_info.window)
+        self.layout = PagerLayout(self.source_container.open_file, has_colon, waiting,
+                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, self.source_container, self.source_container.search_toolbar)
 
         self.application = prompt_toolkit.Application(
             input=input,
@@ -167,7 +149,7 @@ class Pager:
             key_bindings=self.key_bindings,
             style=prompt_toolkit.styles.Style.from_dict(ui_style),
             mouse_support=True,
-            after_render=self._after_render,
+            after_render=self.source_container._after_render,
             full_screen=True,
             editing_mode=prompt_toolkit.enums.EditingMode.VI,
         )
@@ -191,7 +173,7 @@ class Pager:
         """
         Displayed at the bottom right.
         """
-        source_info = self.source_info[self.current_source]
+        source_info = self.source_container.current_source_info
         buffer = source_info.buffer
         document = buffer.document
         row = document.cursor_position_row + 1
@@ -200,7 +182,7 @@ class Pager:
         if source_info.wrap_lines:
             col = "WRAP"
 
-        if self.current_source.eof():
+        if self.source_container.current_source.eof():
             percentage = int(100 * row / document.line_count)
             return [
                 (
@@ -284,7 +266,8 @@ class Pager:
 
     def _print_filename(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Print the current file name. "
-        self._message.set(" {} ".format(self.current_source.get_name()))
+        self._message.set(" {} ".format(
+            self.source_container.current_source.get_name()))
 
     def _help(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Display Help. "
@@ -470,85 +453,12 @@ class Pager:
         """
         assert not sys.stdin.isatty()
         self = cls()
-        self.add_source(
+        self.source_container.add_source(
             PipeSource(
                 fileno=sys.stdin.fileno(), lexer=lexer, encoding=sys.stdin.encoding
             )
         )
         return self
-
-    @property
-    def current_source(self) -> Source:
-        " The current `Source`. "
-        try:
-            return self.sources[self.current_source_index.value]
-        except IndexError:
-            return self._dummy_source
-
-    @property
-    def current_source_info(self) -> SourceInfo:
-        try:
-            return self.source_info[self.current_source]
-        except KeyError:
-            return SourceInfo(self.current_source, self.highlight_search, self.layout.search_toolbar.control)
-
-    def open_file(self, filename: str) -> None:
-        """
-        Open this file.
-        """
-        lexer = prompt_toolkit.lexers.PygmentsLexer.from_filename(
-            filename, sync_from_start=False)
-
-        try:
-            source = FileSource(filename, lexer=lexer)
-        except IOError as e:
-            self._message.set("{}".format(e))
-        else:
-            self.add_source(source)
-
-    def add_source(self, source: Source) -> SourceInfo:
-        """
-        Add a new :class:`.Source` instance.
-        """
-        source_info = SourceInfo(
-            source, self.highlight_search, self.layout.search_toolbar.control)
-        self.source_info[source] = source_info
-
-        self.sources.append(source)
-
-        # Focus
-        self.current_source_index.set(len(self.sources) - 1)
-        self.application.layout.focus(source_info.window)
-
-        return source_info
-
-    def remove_current_source(self) -> None:
-        """
-        Remove the current source from the self.
-        (If >1 source is left.)
-        """
-        if len(self.sources) > 1:
-            current_source = self.current_source
-
-            # Focus the previous source.
-            self.focus_previous_source()
-
-            # Remove the last source.
-            self.sources.remove(current_source)
-        else:
-            self._message.set("Can't remove the last buffer.")
-
-    def focus_previous_source(self) -> None:
-        self.current_source_index.set((
-            self.current_source_index.value - 1) % len(self.sources))
-        self.application.layout.focus(self.current_source_info.window)
-        self._in_colon_mode.set(False)
-
-    def focus_next_source(self) -> None:
-        self.current_source_index.set((
-            self.current_source_index.value + 1) % len(self.sources))
-        self.application.layout.focus(self.current_source_info.window)
-        self._in_colon_mode.set(False)
 
     def display_help(self) -> None:
         """
@@ -556,7 +466,7 @@ class Pager:
         """
         if not self.displaying_help:
             source = FormattedTextSource(HELP, name="<help>")
-            self.add_source(source)
+            self.source_container.add_source(source)
             self.displaying_help = True
 
     def quit_help(self) -> None:
@@ -564,77 +474,5 @@ class Pager:
         Hide the help text.
         """
         if self.displaying_help:
-            self.remove_current_source()
+            self.source_container.remove_current_source()
             self.displaying_help = False
-
-    def _after_render(self, app: prompt_toolkit.Application) -> None:
-        """
-        Each time when the rendering is done, we should see whether we need to
-        read more data from the input pipe.
-        """
-        # When the bottom is visible, read more input.
-        # Try at least `info.window_height`, if this amount of data is
-        # available.
-        info = self.layout.dynamic_body.get_render_info()
-        source = self.current_source
-        source_info = self.source_info[source]
-        b = source_info.buffer
-        line_tokens = source_info.line_tokens
-        loop = asyncio.get_event_loop()
-
-        if not source_info.waiting_for_input_stream and not source.eof() and info:
-            lines_below_bottom = info.ui_content.line_count - info.last_visible_line()
-
-            # Make sure to preload at least 2x the amount of lines on a page.
-            if lines_below_bottom < info.window_height * 2 or self.forward_forever:
-                # Lines to be loaded.
-                lines = [info.window_height * 2 -
-                         lines_below_bottom]  # nonlocal
-
-                def handle_content(tokens: prompt_toolkit.formatted_text.StyleAndTextTuples) -> List[str]:
-                    """Handle tokens, update `line_tokens`, decrease
-                    line count and return list of characters."""
-                    data = []
-                    for token_char in tokens:
-                        char = token_char[1]
-                        if char == "\n":
-                            line_tokens.append([])
-
-                            # Decrease line count.
-                            lines[0] -= 1
-                        else:
-                            line_tokens[-1].append(token_char)
-                        data.append(char)
-                    return data
-
-                def insert_text(list_of_fragments: Sequence[str]) -> None:
-                    document = prompt_toolkit.document.Document(
-                        b.text + "".join(list_of_fragments), b.cursor_position
-                    )
-                    b.set_document(document, bypass_readonly=True)
-
-                    if self.forward_forever:
-                        b.cursor_position = len(b.text)
-
-                    # Schedule redraw.
-                    self.application.invalidate()
-
-                    source_info.waiting_for_input_stream = False
-
-                def receive_content_from_generator() -> None:
-                    " (in executor) Read data from generator. "
-                    # Call `read_chunk` as long as we need more lines.
-                    while lines[0] > 0 and not source.eof():
-                        tokens = source.read_chunk()
-                        data = handle_content(tokens)
-                        loop.call_soon(insert_text, data)
-
-                # Set 'waiting_for_input_stream' and render.
-                source_info.waiting_for_input_stream = True
-                self.application.invalidate()
-
-                # Execute receive_content_from_generator in thread.
-                # (Don't use 'run_in_executor', because we need a daemon.
-                t = threading.Thread(target=receive_content_from_generator)
-                t.daemon = True
-                t.start()
