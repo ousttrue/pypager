@@ -35,9 +35,9 @@ def keybinding(pager: Pager):
                prompt_toolkit.keys.Keys.ControlG, filter=pager.source_container.default_focus)
     pager.bind(pager._print_filename, "f", filter=pager.has_colon)
     pager.bind(pager._help, "h",
-               filter=pager.source_container.default_focus & ~pager.displaying_help)
+               filter=pager.source_container.default_focus)
     pager.bind(pager._help, "H",
-               filter=pager.source_container.default_focus & ~pager.displaying_help)
+               filter=pager.source_container.default_focus)
     pager.bind(pager._repaint, "r",
                filter=pager.source_container.default_focus)
     pager.bind(pager._repaint, "R",
@@ -103,7 +103,6 @@ def keybinding(pager: Pager):
                filter=pager.source_container.default_focus)
     pager.bind(pager.source_container._lastline,
                "escape", ">", filter=pager.source_container.default_focus)
-    pager.bind(pager.source_container._wrap, "w")
     pager.bind(pager.source_container._toggle_highlighting,
                prompt_toolkit.keys.Keys.Escape, "u")
 
@@ -136,11 +135,15 @@ def keybinding(pager: Pager):
     pager.bind(pager._suspend, "c-z", filter=prompt_toolkit.filters.Condition(
         lambda: prompt_toolkit.utils.suspend_to_background_supported()))
 
+    pager.bind(pager.source_container._next_file, "F",
+               filter=pager.source_container.default_focus, eager=True)
+    pager.bind(pager.source_container._previous_file, "B",
+               filter=pager.source_container.default_focus)
+
     #
     # ::: colon :::
     #
-    pager.bind(pager._colon, ":", filter=pager.source_container.default_focus &
-               ~pager.displaying_help)
+    pager.bind(pager._colon, ":", filter=pager.source_container.default_focus)
     pager.bind(pager.source_container._next_file, "n", filter=pager.has_colon)
     pager.bind(pager.source_container._previous_file,
                "p", filter=pager.has_colon)
@@ -150,6 +153,7 @@ def keybinding(pager: Pager):
     pager.bind(pager._cancel_colon, "q", filter=pager.has_colon, eager=True)
     pager.bind(pager._any, prompt_toolkit.keys.Keys.Any,
                filter=pager.has_colon)
+    pager.bind(pager.source_container._wrap, "w", filter=pager.has_colon)
 
     #
     # examine

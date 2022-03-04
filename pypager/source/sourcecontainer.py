@@ -71,6 +71,12 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
             return app.layout.current_window == self.current_source_info.window
         self.default_focus = prompt_toolkit.filters.Condition(default_focus)
 
+    def history_back(self):
+        pass
+
+    def history_forward(self):
+        pass
+
     def _get_buffer_window(self) -> prompt_toolkit.layout.containers.Window:
         " Return the Container object according to which Buffer/Source is visible. "
         # return self.pager.current_source_info.window
@@ -164,14 +170,18 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
             self.on_message("Can't remove the last buffer.")
 
     def focus_previous_source(self) -> None:
-        self.current_source_index = (
-            self.current_source_index - 1) % len(self.sources)
+        if self.current_source_index <= 0:
+            self.on_message('no prev')
+            return
+        self.current_source_index -= 1
         get_app().layout.focus(self.current_source_info.window)
         # self._in_colon_mode.set(False)
 
     def focus_next_source(self) -> None:
-        self.current_source_index = (
-            self.current_source_index + 1) % len(self.sources)
+        if self.current_source_index + 1 >= len(self.sources):
+            self.on_message('no next')
+            return
+        self.current_source_index += 1
         get_app().layout.focus(self.current_source_info.window)
         # self._in_colon_mode.set(False)
 

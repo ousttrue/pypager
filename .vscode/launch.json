@@ -10,7 +10,6 @@
             "request": "launch",
             "module": "pypager",
             "args": [
-                "README.rst",
                 "pypager/pager.py",
             ],
             "console": "externalTerminal",

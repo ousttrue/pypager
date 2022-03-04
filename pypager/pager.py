@@ -56,10 +56,6 @@ class Pager:
         self.has_colon = prompt_toolkit.filters.Condition(
             lambda: self._in_colon_mode)
 
-        self._displaying_help = False
-        self.displaying_help = prompt_toolkit.filters.Condition(
-            lambda: self._displaying_help)
-
         self.key_bindings = prompt_toolkit.key_binding.KeyBindings()
 
         self.layout = PagerLayout(self.source_container.open_file,
@@ -165,34 +161,18 @@ class Pager:
         """
         Display help text.
         """
-        if not self._displaying_help:
-            source = FormattedTextSource(HELP, name="<help>")
-            self.source_container.add_source(source)
-            self._displaying_help = True
-
-    def quit_help(self) -> None:
-        """
-        Hide the help text.
-        """
-        if self._displaying_help:
-            self.source_container.remove_current_source()
-            self._displaying_help = False
+        source = FormattedTextSource(HELP, name="<help>")
+        self.source_container.add_source(source)
 
     def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
         """
         Displayed at the bottom left.
         """
-        if self._displaying_help:
-            return prompt_toolkit.formatted_text.HTML(" HELP -- Press <key>[q]</key> when done")
-        else:
-            return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
+        return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
 
     def _quit(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Quit. "
-        if self._displaying_help:
-            self.quit_help()
-        else:
-            event.app.exit()
+        event.app.exit()
 
     def _repaint(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         event.app.renderer.clear()
