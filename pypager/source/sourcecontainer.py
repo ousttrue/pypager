@@ -4,6 +4,8 @@ import asyncio
 import threading
 
 import prompt_toolkit
+import prompt_toolkit.search
+import prompt_toolkit.filters
 import prompt_toolkit.document
 from prompt_toolkit.application.current import get_app
 import prompt_toolkit.layout.containers
@@ -53,9 +55,21 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
             vi_mode=True, search_buffer=self.search_buffer
         )
 
+        # Returns True when the search buffer is empty.
+        self.search_buffer_is_empty = prompt_toolkit.filters.Condition(
+            lambda: self.search_buffer.text == "")
+
         # When this is True, always make sure that the cursor goes to the
         # bottom of the visible content. This is similar to 'tail -f'.
         self.forward_forever = False
+
+        self.line_wrapping_enable = prompt_toolkit.filters.Condition(
+            lambda: self.current_source_info.wrap_lines)
+
+        def default_focus() -> bool:
+            app = get_app()
+            return app.layout.current_window == self.current_source_info.window
+        self.default_focus = prompt_toolkit.filters.Condition(default_focus)
 
     def _get_buffer_window(self) -> prompt_toolkit.layout.containers.Window:
         " Return the Container object according to which Buffer/Source is visible. "
@@ -277,3 +291,129 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
         " Enable/disable line wrapping. "
         source_info = self.current_source_info
         source_info.wrap_lines = not source_info.wrap_lines
+
+    def _toggle_highlighting(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Toggle search highlighting. "
+        self.highlight_search = not self.highlight_search
+
+    def _mark(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Mark current position. "
+        source_info = self.current_source_info
+        source_info.marks[event.data] = (
+            event.current_buffer.cursor_position,
+            source_info.window.vertical_scroll,
+        )
+
+    def _goto_mark(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to a previously marked position. "
+        self.go_to_mark(event, event.data)
+
+    def _gotomark_dot(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Same as '. "
+        self.go_to_mark(event, ".")
+
+    def go_to_mark(self, event: prompt_toolkit.key_binding.KeyPressEvent, mark: str) -> None:
+        b = event.current_buffer
+        source_info = self.current_source_info
+        try:
+            if mark == "^":  # Start of file.
+                cursor_pos, vertical_scroll = 0, 0
+            elif mark == "$":  # End of file - mark.
+                cursor_pos, vertical_scroll = len(b.text), 0
+            else:  # Custom mark.
+                cursor_pos, vertical_scroll = source_info.marks[mark]
+        except KeyError:
+            pass  # TODO: show warning.
+        else:
+            b.cursor_position = cursor_pos
+            source_info.window.vertical_scroll = vertical_scroll
+
+    def _follow(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Forward forever, like 'tail -f'. "
+        self.forward_forever = True
+
+    def _cancel_search(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Cancel search when backspace is pressed. "
+        prompt_toolkit.search.stop_search()
+
+    def _left(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scroll half page to the left. "
+        w = event.app.layout.current_window
+        b = event.app.current_buffer
+
+        if w and w.render_info:
+            info = w.render_info
+            amount = info.window_width // 2
+
+            # Move cursor horizontally.
+            value = b.cursor_position - min(
+                amount, len(b.document.current_line_before_cursor)
+            )
+            b.cursor_position = value
+
+            # Scroll.
+            w.horizontal_scroll = max(0, w.horizontal_scroll - amount)
+
+    def _right(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scroll half page to the right. "
+        w = event.app.layout.current_window
+        b = event.app.current_buffer
+
+        if w and w.render_info:
+            info = w.render_info
+            amount = info.window_width // 2
+
+            # Move the cursor first to a visible line that is long enough to
+            # have the cursor visible after scrolling. (Otherwise, the Window
+            # will scroll back.)
+            xpos = w.horizontal_scroll + amount
+
+            for line in info.displayed_lines:
+                if len(b.document.lines[line]) >= xpos:
+                    b.cursor_position = b.document.translate_row_col_to_index(
+                        line, xpos
+                    )
+                    break
+
+            # Scroll.
+            w.horizontal_scroll = max(0, w.horizontal_scroll + amount)
+
+    def _next_file(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to next file. "
+        self.focus_next_source()
+
+    def _previous_file(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to previous file. "
+        self.focus_previous_source()
+
+    def _remove_source(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self.remove_current_source()
+
+    def _cancel_examine(self,  event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Cancel 'Examine' input. "
+        event.app.layout.focus(
+            self.current_source_info.window)
+
+    def _get_statusbar_right_tokens(self) -> prompt_toolkit.formatted_text.StyleAndTextTuples:
+        """
+        Displayed at the bottom right.
+        """
+        source_info = self.current_source_info
+        buffer = source_info.buffer
+        document = buffer.document
+        row = document.cursor_position_row + 1
+        col = document.cursor_position_col + 1
+
+        if source_info.wrap_lines:
+            col = "WRAP"
+
+        if self.current_source.eof():
+            percentage = int(100 * row / document.line_count)
+            return [
+                (
+                    "class:statusbar,cursor-position",
+                    " (%s,%s) %s%% " % (row, col, percentage),
+                )
+            ]
+        else:
+            return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
