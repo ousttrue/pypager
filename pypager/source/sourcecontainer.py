@@ -10,6 +10,15 @@ import prompt_toolkit.layout.containers
 import prompt_toolkit.lexers
 import prompt_toolkit.buffer
 import prompt_toolkit.widgets.toolbars
+import prompt_toolkit.key_binding
+from prompt_toolkit.key_binding.bindings.scroll import (
+    scroll_half_page_down,
+    scroll_half_page_up,
+    scroll_one_line_down,
+    scroll_one_line_up,
+    scroll_page_down,
+    scroll_page_up,
+)
 
 from .source_info import SourceInfo
 from .pipe_source import FileSource
@@ -223,3 +232,48 @@ class SourceContainer(prompt_toolkit.layout.containers.Container):
                 t = threading.Thread(target=receive_content_from_generator)
                 t.daemon = True
                 t.start()
+
+    def _pagedown(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Page down."
+        scroll_page_down(event)
+
+    def _pageup(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Page up."
+        scroll_page_up(event)
+
+    def _halfdown(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Half page down."
+        scroll_half_page_down(event)
+
+    def _halfup(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Half page up."
+        scroll_half_page_up(event)
+
+    def _down(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scoll one line down."
+        if event.arg > 1:
+            # When an argument is given, go this amount of lines down.
+            event.current_buffer.auto_down(count=event.arg)
+        else:
+            scroll_one_line_down(event)
+
+    def _up(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Scoll one line up."
+        if event.arg > 1:
+            event.current_buffer.auto_up(count=event.arg)
+        else:
+            scroll_one_line_up(event)
+
+    def _firstline(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to the first line of the file. "
+        event.current_buffer.cursor_position = 0
+
+    def _lastline(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Go to the last line of the file. "
+        b = event.current_buffer
+        b.cursor_position = len(b.text)
+
+    def _wrap(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Enable/disable line wrapping. "
+        source_info = self.current_source_info
+        source_info.wrap_lines = not source_info.wrap_lines

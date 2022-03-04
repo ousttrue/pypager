@@ -24,14 +24,6 @@ import prompt_toolkit.lexers
 import prompt_toolkit.styles
 import prompt_toolkit.filters
 import prompt_toolkit.utils
-from prompt_toolkit.key_binding.bindings.scroll import (
-    scroll_half_page_down,
-    scroll_half_page_up,
-    scroll_one_line_down,
-    scroll_one_line_up,
-    scroll_page_down,
-    scroll_page_up,
-)
 
 
 from .help import HELP
@@ -58,9 +50,27 @@ class Pager:
 
     def __init__(self) -> None:
         self.source_container = SourceContainer(self.on_message)
-        self.in_colon_mode = False
-        self.message = ''
-        self.displaying_help = False
+        self._message = ''
+
+        self._in_colon_mode = False
+        self.has_colon = prompt_toolkit.filters.Condition(
+            lambda: self._in_colon_mode)
+
+        self._displaying_help = False
+        self.displaying_help = prompt_toolkit.filters.Condition(
+            lambda: self._displaying_help)
+
+        self.key_bindings = prompt_toolkit.key_binding.KeyBindings()
+
+        self.layout = PagerLayout(self.source_container.open_file,
+                                  has_colon=self.has_colon,
+                                  waiting=prompt_toolkit.filters.Condition(
+                                      lambda: self.source_container.current_source_info.waiting_for_input_stream),
+                                  _get_statusbar_left_tokens=self._get_statusbar_left_tokens,
+                                  _get_statusbar_right_tokens=self._get_statusbar_right_tokens,
+                                  source_container=self.source_container,
+                                  search_toolbar=self.source_container.search_toolbar,
+                                  get_message=lambda: self._message)
 
         # Input/output.
         # By default, use the stdout device for input.
@@ -68,143 +78,6 @@ class Pager:
         # strokes from the TTY).
         from prompt_toolkit.input.defaults import create_input
         input = create_input(sys.stdout)
-
-        #
-        # key bind
-        #
-        self.key_bindings = prompt_toolkit.key_binding.KeyBindings()
-
-        @prompt_toolkit.filters.Condition
-        def default_focus() -> bool:
-            app = get_app()
-            return app.layout.current_window == self.source_container.current_source_info.window
-
-        @prompt_toolkit.filters.Condition
-        def has_colon() -> bool:
-            return self.in_colon_mode
-
-        @prompt_toolkit.filters.Condition
-        def displaying_help() -> bool:
-            return self.displaying_help
-
-        for c in "01234556789":
-            def _handle_arg(event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-                event.append_to_arg_count(c)
-            self.bind(_handle_arg, c, filter=default_focus)
-
-        self.bind(self._quit, "q", filter=default_focus, eager=True)
-        self.bind(self._quit, "Q", filter=default_focus | has_colon)
-        self.bind(self._quit, "Z", "Z", filter=default_focus)
-        self.bind(self._pagedown, " ", filter=default_focus)
-        self.bind(self._pagedown, "f", filter=default_focus)
-        self.bind(self._pagedown, "c-f", filter=default_focus)
-        self.bind(self._pagedown, "c-v", filter=default_focus)
-        self.bind(self._pageup, "b", filter=default_focus)
-        self.bind(self._pageup, "c-b", filter=default_focus)
-        self.bind(self._pageup, "escape", "v", filter=default_focus)
-        self.bind(self._halfdown, "d", filter=default_focus)
-        self.bind(self._halfdown, "c-d", filter=default_focus)
-        self.bind(self._halfup, "u", filter=default_focus)
-        self.bind(self._halfup, "c-u", filter=default_focus)
-        self.bind(self._down, "e", filter=default_focus)
-        self.bind(self._down, "j", filter=default_focus)
-        self.bind(self._down, "c-e", filter=default_focus)
-        self.bind(self._down, "c-n", filter=default_focus)
-        self.bind(self._down, "c-j", filter=default_focus)
-        self.bind(self._down, "c-m", filter=default_focus)
-        self.bind(self._down, "down", filter=default_focus)
-        self.bind(self._up, "y", filter=default_focus)
-        self.bind(self._up, "k", filter=default_focus)
-        self.bind(self._up, "c-y", filter=default_focus)
-        self.bind(self._up, "c-k", filter=default_focus)
-        self.bind(self._up, "c-p", filter=default_focus)
-        self.bind(self._up, "up", filter=default_focus)
-        self.bind(self._firstline, "g", filter=default_focus, eager=True)
-        self.bind(self._firstline, "<", filter=default_focus)
-        self.bind(self._firstline, "escape", "<", filter=default_focus)
-        self.bind(self._lastline, "G", filter=default_focus)
-        self.bind(self._lastline, ">", filter=default_focus)
-        self.bind(self._lastline, "escape", ">", filter=default_focus)
-
-        self.bind(self._print_filename, "=", filter=default_focus)
-        self.bind(self._print_filename,
-                  prompt_toolkit.keys.Keys.ControlG, filter=default_focus)
-        self.bind(self._print_filename, "f", filter=has_colon)
-
-        self.bind(self._toggle_highlighting,
-                  prompt_toolkit.keys.Keys.Escape, "u")
-        self.bind(self._help, "h", filter=default_focus & ~displaying_help)
-        self.bind(self._help, "H", filter=default_focus & ~displaying_help)
-
-        self.bind(self._mark, "m", prompt_toolkit.keys.Keys.Any,
-                  filter=default_focus)
-        self.bind(self._goto_mark, "'",
-                  prompt_toolkit.keys.Keys.Any, filter=default_focus)
-        self.bind(self._gotomark_dot, "c-x",
-                  prompt_toolkit.keys.Keys.ControlX, filter=default_focus)
-
-        self.bind(self._follow, "F", filter=default_focus)
-        self.bind(self._repaint, "r", filter=default_focus)
-        self.bind(self._repaint, "R", filter=default_focus)
-
-        @prompt_toolkit.filters.Condition
-        def search_buffer_is_empty() -> bool:
-            " Returns True when the search buffer is empty. "
-            return self.source_container.search_buffer.text == ""
-
-        self.bind(self._cancel_search,
-                  "backspace",
-                  filter=prompt_toolkit.filters.has_focus(
-                      self.source_container.search_buffer) & search_buffer_is_empty
-                  )
-
-        @prompt_toolkit.filters.Condition
-        def line_wrapping_enable() -> bool:
-            return self.source_container.current_source_info.wrap_lines
-
-        self.bind(self._left, "left", filter=default_focus &
-                  ~line_wrapping_enable)
-        self.bind(self._left, "escape",
-                  "(", filter=default_focus & ~line_wrapping_enable)
-
-        self.bind(self._right, "right", filter=default_focus &
-                  ~line_wrapping_enable)
-        self.bind(self._right, "escape", ")",
-                  filter=default_focus & ~line_wrapping_enable)
-
-        self.bind(self._suspend, "c-z", filter=prompt_toolkit.filters.Condition(
-            lambda: prompt_toolkit.utils.suspend_to_background_supported()))
-        self.bind(self._wrap, "w")
-
-        #
-        # ::: colon :::
-        #
-        self.bind(self._colon, ":", filter=default_focus & ~displaying_help)
-        self.bind(self._next_file, "n", filter=has_colon)
-        self.bind(self._previous_file, "p", filter=has_colon)
-        self.bind(self._remove_source, "d", filter=has_colon)
-        self.bind(self._cancel_colon, "backspace", filter=has_colon)
-        self.bind(self._cancel_colon, "q", filter=has_colon, eager=True)
-        self.bind(self._any, prompt_toolkit.keys.Keys.Any, filter=has_colon)
-
-        #
-        # examine
-        #
-        self.bind(self._examine, prompt_toolkit.keys.Keys.ControlX,
-                  prompt_toolkit.keys.Keys.ControlV, filter=default_focus)
-        self.bind(self._examine, "e", filter=has_colon)
-        self.bind(self._cancel_examine, "c-c",
-                  filter=prompt_toolkit.filters.has_focus("EXAMINE"))
-        self.bind(self._cancel_examine, "c-g",
-                  filter=prompt_toolkit.filters.has_focus("EXAMINE"))
-
-        waiting = prompt_toolkit.filters.Condition(
-            lambda: self.source_container.current_source_info.waiting_for_input_stream
-        )
-
-        self.layout = PagerLayout(self.source_container.open_file, has_colon, waiting,
-                                  self._get_statusbar_left_tokens, self._get_statusbar_right_tokens, self.source_container, self.source_container.search_toolbar,
-                                  lambda: self.message)
 
         self.application = prompt_toolkit.Application(
             input=input,
@@ -219,10 +92,7 @@ class Pager:
         )
 
         # Hide message when a key is pressed.
-        def key_pressed(_) -> None:
-            self.message = ''
-
-        self.application.key_processor.before_key_press += key_pressed
+        self.application.key_processor.before_key_press += self.clear_message
 
     @classmethod
     def from_pipe(cls, lexer: Optional[prompt_toolkit.lexers.Lexer] = None) -> "Pager":
@@ -238,14 +108,60 @@ class Pager:
         )
         return self
 
+    def bind(self, func: prompt_toolkit.key_binding.key_bindings.KeyHandlerCallable, *keys: Union[prompt_toolkit.keys.Keys, str],
+             filter: prompt_toolkit.filters.FilterOrBool = True,
+             eager: prompt_toolkit.filters.FilterOrBool = False,
+             is_global: prompt_toolkit.filters.FilterOrBool = False,
+             save_before: Callable[[prompt_toolkit.key_binding.KeyPressEvent], bool] = (
+            lambda e: True),
+            record_in_macro: prompt_toolkit.filters.FilterOrBool = True):
+        assert keys
+
+        keys = tuple(prompt_toolkit.key_binding.key_bindings._parse_key(k)
+                     for k in keys)
+        self.key_bindings.bindings.append(
+            prompt_toolkit.key_binding.key_bindings.Binding(
+                keys,
+                func,
+                filter=filter,
+                eager=eager,
+                is_global=is_global,
+                save_before=save_before,
+                record_in_macro=record_in_macro,
+            )
+        )
+        self.key_bindings._clear_cache()
+
+    def clear_message(self, e):
+        self._message = ''
+
     def on_message(self, msg: str):
-        self.message = msg
+        self._message = msg
+
+    def _print_filename(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        " Print the current file name. "
+        self._message = " {} ".format(
+            self.source_container.current_source.get_name())
+
+    def _colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self._in_colon_mode = True
+
+    def _cancel_colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self._in_colon_mode = False
+
+    def _any(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        self._in_colon_mode = False
+        self._message = "No command."
+
+    def _examine(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
+        event.app.layout.focus(self.layout.examine.examine_buffer)
+        self._in_colon_mode = False
 
     def _get_statusbar_left_tokens(self) -> prompt_toolkit.formatted_text.HTML:
         """
         Displayed at the bottom left.
         """
-        if self.displaying_help:
+        if self._displaying_help:
             return prompt_toolkit.formatted_text.HTML(" HELP -- Press <key>[q]</key> when done")
         else:
             return prompt_toolkit.formatted_text.HTML(" (press <key>[h]</key> for help or <key>[q]</key> to quit)")
@@ -274,81 +190,12 @@ class Pager:
         else:
             return [("class:statusbar,cursor-position", " (%s,%s) " % (row, col))]
 
-    def bind(self, func: prompt_toolkit.key_binding.key_bindings.KeyHandlerCallable, *keys: Union[prompt_toolkit.keys.Keys, str],
-             filter: prompt_toolkit.filters.FilterOrBool = True,
-             eager: prompt_toolkit.filters.FilterOrBool = False,
-             is_global: prompt_toolkit.filters.FilterOrBool = False,
-             save_before: Callable[[prompt_toolkit.key_binding.KeyPressEvent], bool] = (
-            lambda e: True),
-            record_in_macro: prompt_toolkit.filters.FilterOrBool = True):
-        assert keys
-
-        keys = tuple(prompt_toolkit.key_binding.key_bindings._parse_key(k)
-                     for k in keys)
-        self.key_bindings.bindings.append(
-            prompt_toolkit.key_binding.key_bindings.Binding(
-                keys,
-                func,
-                filter=filter,
-                eager=eager,
-                is_global=is_global,
-                save_before=save_before,
-                record_in_macro=record_in_macro,
-            )
-        )
-        self.key_bindings._clear_cache()
-
     def _quit(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Quit. "
-        if self.displaying_help:
+        if self._displaying_help:
             self.quit_help()
         else:
             event.app.exit()
-
-    def _pagedown(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Page down."
-        scroll_page_down(event)
-
-    def _pageup(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Page up."
-        scroll_page_up(event)
-
-    def _halfdown(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Half page down."
-        scroll_half_page_down(event)
-
-    def _halfup(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Half page up."
-        scroll_half_page_up(event)
-
-    def _down(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Scoll one line down."
-        if event.arg > 1:
-            # When an argument is given, go this amount of lines down.
-            event.current_buffer.auto_down(count=event.arg)
-        else:
-            scroll_one_line_down(event)
-
-    def _up(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Scoll one line up."
-        if event.arg > 1:
-            event.current_buffer.auto_up(count=event.arg)
-        else:
-            scroll_one_line_up(event)
-
-    def _firstline(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Go to the first line of the file. "
-        event.current_buffer.cursor_position = 0
-
-    def _lastline(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Go to the last line of the file. "
-        b = event.current_buffer
-        b.cursor_position = len(b.text)
-
-    def _print_filename(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Print the current file name. "
-        self.message = " {} ".format(
-            self.source_container.current_source.get_name())
 
     def _help(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Display Help. "
@@ -443,9 +290,6 @@ class Pager:
             # Scroll.
             w.horizontal_scroll = max(0, w.horizontal_scroll + amount)
 
-    def _colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        self.in_colon_mode = True
-
     def _next_file(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Go to next file. "
         self.source_container.focus_next_source()
@@ -454,19 +298,8 @@ class Pager:
         " Go to previous file. "
         self.source_container.focus_previous_source()
 
-    def _examine(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        event.app.layout.focus(self.layout.examine.examine_buffer)
-        self.in_colon_mode = False
-
     def _remove_source(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         self.source_container.remove_current_source()
-
-    def _cancel_colon(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        self.in_colon_mode = False
-
-    def _any(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        self.in_colon_mode = False
-        self.message = "No command."
 
     def _cancel_examine(self,  event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
         " Cancel 'Examine' input. "
@@ -477,24 +310,19 @@ class Pager:
         " Suspend to bakground. "
         event.app.suspend_to_background()
 
-    def _wrap(self, event: prompt_toolkit.key_binding.KeyPressEvent) -> None:
-        " Enable/disable line wrapping. "
-        source_info = self.source_container.current_source_info
-        source_info.wrap_lines = not source_info.wrap_lines
-
     def display_help(self) -> None:
         """
         Display help text.
         """
-        if not self.displaying_help:
+        if not self._displaying_help:
             source = FormattedTextSource(HELP, name="<help>")
             self.source_container.add_source(source)
-            self.displaying_help = True
+            self._displaying_help = True
 
     def quit_help(self) -> None:
         """
         Hide the help text.
         """
-        if self.displaying_help:
+        if self._displaying_help:
             self.source_container.remove_current_source()
-            self.displaying_help = False
+            self._displaying_help = False
